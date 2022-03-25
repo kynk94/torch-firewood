@@ -1,0 +1,4 @@
+[submodule "tests/stylegan3"]
+	path = tests/stylegan3
+	url = https://github.com/NVlabs/stylegan3.git
+	ignore = untracked

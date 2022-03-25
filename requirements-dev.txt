@@ -1,0 +1,12 @@
+albumentations
+black
+imageio
+isort
+mypy
+ninja
+pre-commit
+pytest
+pytest-cov
+pytorch-lightning
+torchmetrics[image]
+types-setuptools

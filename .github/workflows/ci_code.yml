@@ -1,0 +1,32 @@
+name: CI Code
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    name: CI Code
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v2
+
+      - uses: actions/setup-python@v2
+        with:
+          python-version: 3.9
+
+      - name: Install dependencies
+        run: |
+          pip install isort black mypy types-pkg-resources torch==1.10.2 pytorch-lightning torchmetrics[image] -f https://download.pytorch.org/whl/cpu/torch_stable.html
+      - name: Run isort
+        run: isort . --check-only
+
+      - name: Run black
+        run: black . --check
+
+      - name: Run mypy
+        run: mypy

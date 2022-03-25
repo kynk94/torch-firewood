@@ -1,0 +1,8 @@
+lightning_logs
+datasets
+build
+dist
+*.egg-info
+*.egg
+*.ipynb
+.git

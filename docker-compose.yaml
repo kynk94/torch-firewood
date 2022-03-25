@@ -1,0 +1,35 @@
+version: "3.9"
+services:
+  firewood:
+    container_name: firewood
+    image: firewood:dev
+    build:
+      context: .
+      dockerfile: Dockerfile
+      args:
+        PYTHON_VERSION: 3.9
+        # CERT_ZIP: CERT.zip
+        DEFAULT_SHELL: bash
+        USE_JUPYTER: "false"
+        BUILD: "true"
+    ipc: host
+    expose:
+      - "6006"
+      - "8888"
+    ports:
+      - "16006:6006"
+      - "18888:8888"
+    working_dir: ${HOME}
+    # stdin_open: true
+    # tty: true
+    command: [
+      "conda", "run", "--no-capture-output",
+      "python", "-c", "import firewood._C; print(firewood._C);",
+    ]
+    deploy:
+      resources:
+        reservations:
+          devices:
+          - driver: "nvidia"
+            # device_ids: ["0"]
+            capabilities: [gpu]

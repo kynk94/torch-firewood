@@ -1,0 +1,19 @@
+[run]
+source =
+    firewood/common
+    firewood/layers
+    firewood/models
+    firewood/trainer/callbacks
+    firewood/trainer/losses
+    firewood/trainer/metrics
+    firewood/trainer/utils
+    firewood/utils
+
+[report]
+precision = 2
+show_missing = True
+exclude_lines = 
+    pragma: no cover
+    @overload
+    pass
+    if __name__ == "__main__":
