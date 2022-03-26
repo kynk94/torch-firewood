@@ -15,7 +15,7 @@ from firewood import utils
 from firewood.common.backend import runtime_build
 from firewood.common.constant import NULL_TENSOR
 from firewood.common.types import DEVICE, FLOAT, INT
-from firewood.utils.image import nearest_downsample, zero_insertion_upsample
+from firewood.utils.image import nearest_downsample, upsample
 
 _CUDA_OPERATION_CACHE: Dict[
     Tuple[
@@ -129,6 +129,7 @@ class _UpFirDnNd(nn.Module):
         gain: float = 1.0,
         normalize_kernel: bool = True,
         flip_kernel: bool = False,
+        upsample_mode: str = "zeros",
         ignore_same_padding: bool = False,
         device: Optional[DEVICE] = None,
     ) -> None:
@@ -138,9 +139,10 @@ class _UpFirDnNd(nn.Module):
         self.rank = rank
         self.up = utils.normalize_int_tuple(up, rank)
         self.down = utils.normalize_int_tuple(down, rank)
-        self.gain = gain * math.prod(self.up)
+        self.gain = gain
         self.normalize_kernel = normalize_kernel
         self.flip_kernel = flip_kernel
+        self.upsample_mode = upsample_mode
         self.ignore_same_padding = ignore_same_padding
 
         self.kernel = Parameter(
@@ -172,6 +174,7 @@ class _UpFirDnNd(nn.Module):
             up=self.up,
             down=self.down,
             padding=self.padding,
+            upsample_mode=self.upsample_mode,
         )
         self.to(device=self.device)
 
@@ -356,6 +359,7 @@ def upfirdnNd(
     up: INT = 1,
     down: INT = 1,
     padding: INT = 0,
+    upsample_mode: str = "zeros",
 ) -> Tensor:
     if isinstance(up, int):
         up = (up,) * (input.ndim - 2)
@@ -364,13 +368,20 @@ def upfirdnNd(
     if isinstance(padding, int):
         padding = (padding,) * (input.ndim - 2)
 
+    # upsample
     if any(u > 1 for u in up) and all(u >= 1 for u in up):
-        input = zero_insertion_upsample(input, up)
+        input = upsample(input, up, mode=upsample_mode)
+    if upsample_mode.startswith("zero"):
+        gain = gain * math.prod(up)
+
+    # pad
     if any(p != 0 for p in padding):
         input = F.pad(input, padding, mode="constant", value=0)
 
+    # fir
     output = firNd(input, kernel, gain=gain, flip_kernel=flip_kernel)
 
+    # downsample
     if any(d > 1 for d in down) and all(d >= 1 for d in down):
         output = nearest_downsample(output, down)
     return output
@@ -394,6 +405,8 @@ def load_cuda_upfirdn2d(
             "Make sure that the CUDA extension is installed and that "
             "the CUDA_HOME environment variable is set."
         )
+
+    gain *= math.prod(up)
 
     class UpFirDn2dCUDA(torch.autograd.Function):
         @staticmethod
