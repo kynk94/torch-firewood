@@ -485,7 +485,7 @@ def upsample(input: Tensor, factor: INT, mode: str = "zeros") -> Tensor:
         mode: upsampling mode, "zeros" or "nearest".
     """
     lower_mode = mode.lower()
-    if lower_mode.startswith("nearest"):
+    if lower_mode.startswith("near"):
         return nearest_upsample(input, factor)
     if lower_mode.startswith("zero"):
         return zero_insertion_upsample(input, factor)
