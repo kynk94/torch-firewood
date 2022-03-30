@@ -50,9 +50,11 @@ class Block(nn.Module):
         self._lr_equalization = lr_equalization
 
         self.weight_layer = weight_layer
-        self.rank = (
-            getattr(getattr(weight_layer, "weight", None), "ndim", 3) - 2
-        )
+        self.rank = getattr(weight_layer, "rank", None)
+        if self.rank is None:
+            self.rank = (
+                getattr(getattr(weight_layer, "weight", None), "ndim", 3) - 2
+            )
         # set FIR filter
         self.up_fir, self.down_fir = get_upfirdn_layer(
             rank=self.rank, kernel=fir, **fir_args or dict()
