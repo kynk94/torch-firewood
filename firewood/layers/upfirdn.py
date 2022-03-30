@@ -100,7 +100,7 @@ def get_upfirdn_layer(
             device=device,
         )
         padding = 0
-    if any(d > 1 for d in down):
+    if any(d > 1 for d in down) or kernel is not None:
         firdown = _UpFirDnNd(
             rank=rank,
             kernel=kernel,
