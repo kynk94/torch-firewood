@@ -26,7 +26,6 @@ class ModelCheckpoint(_ModelCheckpoint):
         train_time_interval: Optional[timedelta] = None,
         every_n_epochs: Optional[int] = None,
         save_on_train_epoch_end: Optional[bool] = None,
-        every_n_val_epochs: Optional[int] = None,
     ):
         if save_last_k is not None:
             if monitor is not None:
@@ -38,20 +37,19 @@ class ModelCheckpoint(_ModelCheckpoint):
             save_top_k = save_last_k
             save_on_train_epoch_end = True
         super().__init__(
-            dirpath,
-            filename,
-            monitor,
-            verbose,
-            save_last,
-            save_top_k,
-            save_weights_only,
-            mode,
-            auto_insert_metric_name,
-            every_n_train_steps,
-            train_time_interval,
-            every_n_epochs,
-            save_on_train_epoch_end,
-            every_n_val_epochs,
+            dirpath=dirpath,
+            filename=filename,
+            monitor=monitor,
+            verbose=verbose,
+            save_last=save_last,
+            save_top_k=save_top_k,
+            save_weights_only=save_weights_only,
+            mode=mode,
+            auto_insert_metric_name=auto_insert_metric_name,
+            every_n_train_steps=every_n_train_steps,
+            train_time_interval=train_time_interval,
+            every_n_epochs=every_n_epochs,
+            save_on_train_epoch_end=save_on_train_epoch_end,
         )
         self.initial_time = time.monotonic()
 
