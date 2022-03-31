@@ -10,6 +10,7 @@ from torch.nn.modules.instancenorm import _InstanceNorm
 def get(
     normalization: Optional[Union[nn.Module, str]],
     num_features: int,
+    eps: float = 1e-9,
     unbiased: bool = False,
     **kwargs: Any,
 ) -> Optional[nn.Module]:
@@ -24,7 +25,7 @@ def get(
         return normalization(num_features, **kwargs)
     normalization = normalization.lower()
     if normalization in {"bn", "batch", "batch_norm", "batch_normalization"}:
-        return BatchNorm(num_features=num_features, **kwargs)
+        return BatchNorm(num_features=num_features, eps=eps, **kwargs)
     if normalization in {
         "sbn",
         "sync_bn",
@@ -32,9 +33,9 @@ def get(
         "sync_batch_norm",
         "sync_batch_normalization",
     }:
-        return nn.SyncBatchNorm(num_features=num_features, **kwargs)
+        return nn.SyncBatchNorm(num_features=num_features, eps=eps, **kwargs)
     if normalization in {"gn", "group", "group_norm", "group_normalization"}:
-        return GroupNorm(num_channels=num_features, **kwargs)
+        return GroupNorm(num_channels=num_features, eps=eps, **kwargs)
     if normalization in {
         "in",
         "instance",
@@ -42,8 +43,15 @@ def get(
         "instance_normalization",
     }:
         return InstanceNorm(
-            num_features=num_features, unbiased=unbiased, **kwargs
+            num_features=num_features, eps=eps, unbiased=unbiased, **kwargs
         )
+    if normalization in {
+        "pn",
+        "pixel",
+        "pixel_norm",
+        "pixel_normalization",
+    }:
+        return PixelNorm(eps=eps, **kwargs)
     raise ValueError(f"Unknown normalization: {normalization}")
 
 
@@ -129,3 +137,17 @@ class InstanceNorm(_InstanceNorm):
 
     def extra_repr(self) -> str:
         return super().extra_repr() + f", unbiased={self.unbiased}"
+
+
+class PixelNorm(nn.Module):
+    def __init__(self, eps: float = 1e-9) -> None:
+        super().__init__()
+        self.eps = eps
+
+    def forward(self, input: Tensor) -> Tensor:
+        return input * torch.rsqrt(
+            torch.mean(input**2, dim=1, keepdim=True) + self.eps
+        )
+
+    def extra_repr(self) -> str:
+        return f", eps={self.eps}"
