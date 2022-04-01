@@ -150,4 +150,4 @@ class PixelNorm(nn.Module):
         )
 
     def extra_repr(self) -> str:
-        return f", eps={self.eps}"
+        return f"eps={self.eps}"
