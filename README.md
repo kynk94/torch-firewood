@@ -26,7 +26,7 @@ All layers are compatible with official pytorch `nn.Module` and support `ddp` st
 * [x] Pix2PixHD
   [:evergreen_tree:Model](https://github.com/kynk94/torch-firewood/blob/main/firewood/models/gan/pix2pixHD.py)
   [:fire:Trainer](https://github.com/kynk94/torch-firewood/blob/main/firewood/trainer/gan/pix2pixHD.py)
-* [ ] ProGAN
+* [ ] PGGAN
 * [ ] StyleGAN
 
 ### Semantic Segmentation
