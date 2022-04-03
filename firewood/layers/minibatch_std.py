@@ -45,7 +45,7 @@ class MinibatchStd(nn.Module):
             return feature
 
         feature = feature.repeat(B // M, *(1,) * (feature.ndim - 1))
-        return torch.cat([input, feature], dim=1)
+        return torch.cat((input, feature), dim=1)
 
     def calc_grouped_std(self, input: Tensor) -> Tensor:
         B, C, *S = input.shape
