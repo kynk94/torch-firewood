@@ -145,8 +145,8 @@ class PixelNorm(nn.Module):
         self.eps = eps
 
     def forward(self, input: Tensor) -> Tensor:
-        return input * torch.rsqrt(
-            torch.mean(input**2, dim=1, keepdim=True) + self.eps
+        return input.mul(
+            input.square().mean(dim=1, keepdim=True).add(self.eps).rsqrt()
         )
 
     def extra_repr(self) -> str:
