@@ -1,3 +1,5 @@
+from typing import Optional
+
 import torch
 import torch.nn as nn
 from torch import Tensor
@@ -19,16 +21,16 @@ class MinibatchStd(nn.Module):
         eps: float = 1e-8,
     ) -> None:
         super().__init__()
-        self.groups = groups
         if averaging not in {"all", "spatial", "channel"}:
             raise ValueError(f"Not supported averaging mode: {averaging}")
+        self.groups = groups
         self.averaging = averaging
         self.concat = concat
         self.eps = eps
 
-    def forward(self, input: Tensor) -> Tensor:
+    def forward(self, input: Tensor, groups: Optional[int] = None) -> Tensor:
         B = input.size(0)
-        grouped_std = self.calc_grouped_std(input.float())
+        grouped_std = self.calc_grouped_std(input.float(), groups)
         M = grouped_std.size(0)
 
         if self.averaging == "all":  # (M, 1, *1) after averaging
@@ -47,9 +49,12 @@ class MinibatchStd(nn.Module):
         feature = feature.repeat(B // M, *(1,) * (feature.ndim - 1))
         return torch.cat((input, feature), dim=1)
 
-    def calc_grouped_std(self, input: Tensor) -> Tensor:
+    def calc_grouped_std(
+        self, input: Tensor, groups: Optional[int] = None
+    ) -> Tensor:
         B, C, *S = input.shape
-        groups = min(B, self.groups)
+        groups = groups or self.groups or max(1, B // 2)
+        groups = min(B, groups)
         if B % groups != 0:
             raise ValueError(
                 f"The number of batch {B} is not divisible by groups {groups}"
