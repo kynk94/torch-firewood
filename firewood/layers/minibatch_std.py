@@ -15,7 +15,7 @@ class MinibatchStd(nn.Module):
 
     def __init__(
         self,
-        groups: int = 4,
+        size: int = 4,
         averaging: str = "all",
         concat: bool = True,
         eps: float = 1e-8,
@@ -23,14 +23,14 @@ class MinibatchStd(nn.Module):
         super().__init__()
         if averaging not in {"all", "spatial", "channel"}:
             raise ValueError(f"Not supported averaging mode: {averaging}")
-        self.groups = groups
+        self.size = size
         self.averaging = averaging
         self.concat = concat
         self.eps = eps
 
-    def forward(self, input: Tensor, groups: Optional[int] = None) -> Tensor:
+    def forward(self, input: Tensor, size: Optional[int] = None) -> Tensor:
         B = input.size(0)
-        grouped_std = self.calc_grouped_std(input.float(), groups)
+        grouped_std = self.calc_grouped_std(input.float(), size)
         M = grouped_std.size(0)
 
         if self.averaging == "all":  # (M, 1, *1) after averaging
@@ -50,15 +50,15 @@ class MinibatchStd(nn.Module):
         return torch.cat((input, feature), dim=1)
 
     def calc_grouped_std(
-        self, input: Tensor, groups: Optional[int] = None
+        self, input: Tensor, size: Optional[int] = None
     ) -> Tensor:
         B, C, *S = input.shape
-        groups = groups or self.groups or max(1, B // 2)
-        groups = min(B, groups)
-        if B % groups != 0:
+        size = size or self.size or max(1, B // 2)
+        size = min(B, size)
+        if B % size != 0:
             raise ValueError(
-                f"The number of batch {B} is not divisible by groups {groups}"
+                f"The number of batch {B} is not divisible by size {size}"
             )
-        grouped_input = input.view(groups, -1, C, *S)
+        grouped_input = input.view(size, -1, C, *S)
         variance = grouped_input.var(0, unbiased=False, keepdim=False)
         return variance.add(self.eps).sqrt()
