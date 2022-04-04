@@ -31,7 +31,8 @@ class MinibatchStd(nn.Module):
     def forward(self, input: Tensor, size: Optional[int] = None) -> Tensor:
         B = input.size(0)
         grouped_std = self.calc_grouped_std(input.float(), size)
-        M = grouped_std.size(0)
+        M, _, *S = grouped_std.shape
+        repeats = (B // M, 1, *S)
 
         if self.averaging == "all":  # (M, 1, *1) after averaging
             dim = tuple(range(1, grouped_std.ndim))
@@ -39,15 +40,14 @@ class MinibatchStd(nn.Module):
             dim = tuple(range(2, grouped_std.ndim))
         elif self.averaging == "channel":  # (M, 1, *S) after averaging
             dim = (1,)
+            repeats = (*repeats[:2], *(1,) * len(S))
         else:
             raise ValueError(f"Not supported averaging mode: {self.averaging}")
         feature = grouped_std.mean(dim=dim, keepdim=True).to(dtype=input.dtype)
 
-        if not self.concat:
-            return feature
-
-        feature = feature.repeat(B // M, *(1,) * (feature.ndim - 1))
-        return torch.cat((input, feature), dim=1)
+        if self.concat:
+            return torch.cat((input, feature.repeat(repeats)), dim=1)
+        return feature
 
     def calc_grouped_std(
         self, input: Tensor, size: Optional[int] = None
