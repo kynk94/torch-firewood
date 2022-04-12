@@ -77,14 +77,35 @@ class LatentImageSampler(_ImageCallback):
     ) -> None:
         self.forward(trainer, pl_module, title="epoch")
 
-    def on_batch_end(
-        self, trainer: Trainer, pl_module: LightningModule
+    def on_train_batch_end(
+        self,
+        trainer: Trainer,
+        pl_module: LightningModule,
+        outputs: Optional[STEP_OUTPUT],
+        batch: Any,
+        batch_idx: int,
+        unused: Optional[int] = 0,
     ) -> None:
+        super().on_train_batch_end
         if self.step is None:
             return
         if trainer.global_step == 0 or trainer.global_step % self.step != 0:
             return
+        self.forward(trainer, pl_module, title="batch")
 
+    def on_validation_batch_end(
+        self,
+        trainer: Trainer,
+        pl_module: LightningModule,
+        outputs: Optional[STEP_OUTPUT],
+        batch: Any,
+        batch_idx: int,
+        dataloader_idx: int,
+    ) -> None:
+        if trainer.sanity_checking or self.step is None:
+            return
+        if trainer.global_step == 0 or trainer.global_step % self.step != 0:
+            return
         self.forward(trainer, pl_module, title="batch")
 
 
@@ -162,7 +183,7 @@ class ConditionImageSampler(_ImageCallback):
             trainer=trainer,
             pl_module=pl_module,
             batch=self.get_train_batch(trainer),
-            fixed_batch=self.get_train_fixed_batch(trainer),
+            fixed_batch=self.get_fixed_train_batch(trainer),
             title="epoch",
         )
 
@@ -175,7 +196,7 @@ class ConditionImageSampler(_ImageCallback):
             trainer=trainer,
             pl_module=pl_module,
             batch=self.get_val_batch(trainer),
-            fixed_batch=self.get_val_fixed_batch(trainer),
+            fixed_batch=self.get_fixed_val_batch(trainer),
             title="val/epoch",
         )
 
@@ -196,7 +217,7 @@ class ConditionImageSampler(_ImageCallback):
             trainer=trainer,
             pl_module=pl_module,
             batch=batch,
-            fixed_batch=self.get_train_fixed_batch(trainer),
+            fixed_batch=self.get_fixed_train_batch(trainer),
             title="batch",
         )
 
@@ -217,7 +238,7 @@ class ConditionImageSampler(_ImageCallback):
             trainer=trainer,
             pl_module=pl_module,
             batch=batch,
-            fixed_batch=self.get_val_fixed_batch(trainer),
+            fixed_batch=self.get_fixed_val_batch(trainer),
             title="val/batch",
         )
 
@@ -297,7 +318,7 @@ class I2ISampler(_ImageCallback):
             trainer=trainer,
             pl_module=pl_module,
             batch=self.get_train_batch(trainer),
-            fixed_batch=self.get_train_fixed_batch(trainer),
+            fixed_batch=self.get_fixed_train_batch(trainer),
             title="epoch",
         )
 
@@ -310,7 +331,7 @@ class I2ISampler(_ImageCallback):
             trainer=trainer,
             pl_module=pl_module,
             batch=self.get_val_batch(trainer),
-            fixed_batch=self.get_val_fixed_batch(trainer),
+            fixed_batch=self.get_fixed_val_batch(trainer),
             title="val/epoch",
         )
 
@@ -331,7 +352,7 @@ class I2ISampler(_ImageCallback):
             trainer=trainer,
             pl_module=pl_module,
             batch=batch,
-            fixed_batch=self.get_train_fixed_batch(trainer),
+            fixed_batch=self.get_fixed_train_batch(trainer),
             title="batch",
         )
 
@@ -352,6 +373,6 @@ class I2ISampler(_ImageCallback):
             trainer=trainer,
             pl_module=pl_module,
             batch=batch,
-            fixed_batch=self.get_val_fixed_batch(trainer),
+            fixed_batch=self.get_fixed_val_batch(trainer),
             title="val/batch",
         )

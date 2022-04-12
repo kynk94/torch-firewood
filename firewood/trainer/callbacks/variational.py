@@ -234,15 +234,9 @@ class ConditionInterpolator(_ImageCallback):
             for z_y in np.linspace(*self.conditions_range, num=self.nrow):
                 # set all dims to zero
                 if self.conditions_base is None:
-                    z = torch.zeros(
-                        size=(1, condition_dim),
-                        device=pl_module.device,
-                        pin_memory=True,
-                    )
+                    z = torch.zeros(size=(1, condition_dim))
                 else:
-                    z = self.conditions_base.to(
-                        device=pl_module.device, non_blocking=True
-                    )
+                    z = self.conditions_base.clone()
 
                 # set the dim to interpolate
                 div, mod = divmod(len(self.target_dims), 2)
@@ -253,7 +247,9 @@ class ConditionInterpolator(_ImageCallback):
 
                 # sample
                 # generate images
-                img: Tensor = pl_module(z)
+                img: Tensor = pl_module(
+                    z.to(device=pl_module.device, non_blocking=True)
+                )
 
                 if len(img.size()) == 2:
                     img_dim = getattr(pl_module, "img_dim", None)

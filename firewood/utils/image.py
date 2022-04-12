@@ -75,6 +75,7 @@ def alpha_smoothing_NCHW_tensor(
     image: Tensor,
     alpha: Optional[Tensor] = None,
     background_color: Union[Tensor, INT] = 0,
+    antialias: bool = False,
 ) -> Tensor:
     device = image.device
     if image.dtype != torch.float32:
@@ -95,7 +96,7 @@ def alpha_smoothing_NCHW_tensor(
             alpha.float(),
             (H, W),
             interpolation="bilinear",
-            antialias=True,
+            antialias=antialias,  # antialias does not keep gradient
         )
     alpha = normalize_image_array(cast(Tensor, alpha), 0, 1)
 

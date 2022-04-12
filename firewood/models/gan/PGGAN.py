@@ -83,7 +83,7 @@ class Upsample(nn.Module):
                 TFT.resize,
                 size=self.size,
                 interpolation=self.mode,
-                antialias=True,
+                antialias=False,
             )
 
     def forward(self, input: Tensor) -> Tensor:
@@ -113,7 +113,7 @@ class Downsample(nn.Module):
                 TFT.resize,
                 size=self.size,
                 interpolation=self.mode,
-                antialias=True,
+                antialias=False,
             )
 
     def forward(self, input: Tensor) -> Tensor:
