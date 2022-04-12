@@ -1,8 +1,9 @@
-from typing import List, Optional, Sequence, Tuple, Union, cast
+from typing import Any, List, Optional, Sequence, Tuple, Union, cast
 
 import numpy as np
 import torch
 from pytorch_lightning import LightningModule, Trainer
+from pytorch_lightning.utilities.types import STEP_OUTPUT
 from torch import Tensor
 
 from firewood.common.types import FLOAT, INT
@@ -70,10 +71,31 @@ class LatentDimInterpolator(_ImageCallback):
             return
         self.forward(trainer, pl_module, title="interpolation/epoch")
 
-    def on_batch_end(
-        self, trainer: Trainer, pl_module: LightningModule
+    def on_train_batch_end(
+        self,
+        trainer: Trainer,
+        pl_module: LightningModule,
+        outputs: Optional[STEP_OUTPUT],
+        batch: Any,
+        batch_idx: int,
+        unused: int = 0,
     ) -> None:
         if self.step is None:
+            return
+        if trainer.global_step == 0 or trainer.global_step % self.step != 0:
+            return
+        self.forward(trainer, pl_module, title="interpolation/batch")
+
+    def on_validation_batch_end(
+        self,
+        trainer: Trainer,
+        pl_module: LightningModule,
+        outputs: Optional[STEP_OUTPUT],
+        batch: Any,
+        batch_idx: int,
+        dataloader_idx: int,
+    ) -> None:
+        if trainer.sanity_checking or self.step is None:
             return
         if trainer.global_step == 0 or trainer.global_step % self.step != 0:
             return
@@ -201,10 +223,31 @@ class ConditionInterpolator(_ImageCallback):
             return
         self.forward(trainer, pl_module, title="interpolation/epoch")
 
-    def on_batch_end(
-        self, trainer: Trainer, pl_module: LightningModule
+    def on_train_batch_end(
+        self,
+        trainer: Trainer,
+        pl_module: LightningModule,
+        outputs: Optional[STEP_OUTPUT],
+        batch: Any,
+        batch_idx: int,
+        unused: int = 0,
     ) -> None:
         if self.step is None:
+            return
+        if trainer.global_step == 0 or trainer.global_step % self.step != 0:
+            return
+        self.forward(trainer, pl_module, title="interpolation/batch")
+
+    def on_validation_batch_end(
+        self,
+        trainer: Trainer,
+        pl_module: LightningModule,
+        outputs: Optional[STEP_OUTPUT],
+        batch: Any,
+        batch_idx: int,
+        dataloader_idx: int,
+    ) -> None:
+        if trainer.sanity_checking or self.step is None:
             return
         if trainer.global_step == 0 or trainer.global_step % self.step != 0:
             return
