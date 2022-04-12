@@ -74,13 +74,13 @@ class BiasLREqualizer:
         if hasattr(module, name + "_orig"):
             setattr(fn, "target_name", name + "_orig")
 
-        bias: Tensor = utils.popattr(module, fn.target_name)
+        bias: Tensor = utils.popattr(module, fn.target_name).clone()
         bias = torch.tensor(init, dtype=bias.dtype, device=bias.device).expand(
             bias.shape
         )
         setattr(module, "bias_init", init)
         setattr(module, fn.target_name, bias.data)
-        module.register_parameter(name + "_param", Parameter(bias.data))
+        module.register_parameter(name + "_param", Parameter(bias.clone()))
         module.register_buffer(
             "bias_gain",
             torch.tensor(lr_multiplier, dtype=bias.dtype, device=bias.device),
@@ -168,11 +168,13 @@ class WeightLREqualizer:
         if hasattr(module, name + "_orig"):
             setattr(fn, "target_name", name + "_orig")
 
-        weight: Tensor = utils.popattr(module, fn.target_name)
+        weight: Tensor = utils.popattr(module, fn.target_name).clone()
         setattr(module, "weight_init_std", init_std)
         init.normal_(weight, mean=0, std=init_std / lr_multiplier)
         setattr(module, fn.target_name, weight.data)
-        module.register_parameter(name + "_param", Parameter(weight.data))
+        module.register_parameter(
+            name + "_param", Parameter(weight.detach().clone())
+        )
         fan_in = weight.data[0].numel()
         weight_gain = lr_multiplier / math.sqrt(fan_in)
         module.register_buffer(
@@ -185,7 +187,7 @@ class WeightLREqualizer:
         if hasattr(module, "lr_equalization"):
             setattr(module, "lr_equalization", False)
         with torch.no_grad():
-            weight = self.compute_weight(module)
+            weight = self.compute_weight(module).clone()
         delattr(module, self.name + "_param")
         if hasattr(module, self.name + "_orig"):
             module.register_parameter(

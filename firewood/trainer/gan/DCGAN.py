@@ -7,6 +7,7 @@ import torch
 from torch import Tensor
 from torchvision import transforms
 
+from firewood import layers
 from firewood.common.backend import set_runtime_build
 from firewood.common.types import INT
 from firewood.models.gan.DCGAN import Discriminator, Generator
@@ -58,6 +59,9 @@ class DCGAN(pl.LightningModule):
             activation=dis_activation,
             resolution=resolution,
             channels=channels,
+        )
+        layers.lr_equalizer(
+            [self.generator, self.discriminator], recursive=True
         )
 
         # metrics
@@ -193,7 +197,7 @@ def main():
             dataset_class=NoClassImageFolder,
             transform=transform,
             loader_mode="RGB",
-            split="train/val",
+            split=(0.01, 0.9, 0.09),
         )
     else:
         datasets = torchvision_train_test_val_datasets(
