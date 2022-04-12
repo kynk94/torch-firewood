@@ -331,7 +331,7 @@ def test_RGB_alpha_smoothing_NCHW_tensor():
         upscaled_alpha, size=128, interpolation="bilinear", antialias=True
     )
     output = im_utils.alpha_smoothing_NCHW_tensor(
-        float_input, upscaled_alpha, 128
+        float_input, upscaled_alpha, 128, True
     )
     manual_output = (
         float_input * downscaled_alpha + (255 - downscaled_alpha) * 128

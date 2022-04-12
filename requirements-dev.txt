@@ -1,6 +1,7 @@
 albumentations
 black
 imageio
+imageio-ffmpeg
 isort
 mypy
 ninja

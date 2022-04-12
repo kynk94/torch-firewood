@@ -415,7 +415,8 @@ def main():
         datasets=datasets,
         batch_size=args["batch_size"],
         shuffle=True,
-        pin_memory=True,
+        # when pin_memory=True, data will be pinned to the rank 0 gpu
+        pin_memory=False,
     )
 
     sample_source, sample_target = next(iter(train_dataloader))[:2]

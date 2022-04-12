@@ -57,13 +57,11 @@ class _ImageCallback(Callback):
                 raise ValueError(
                     "step must be specified if on_epoch_end is False"
                 )
-            setattr(self, "on_batch_end", _pass_through)
             setattr(self, "on_train_batch_end", _pass_through)
             setattr(self, "on_test_batch_end", _pass_through)
             setattr(self, "on_validation_batch_end", _pass_through)
             setattr(self, "on_predict_batch_end", _pass_through)
         if not on_epoch_end:
-            setattr(self, "on_epoch_end", _pass_through)
             setattr(self, "on_train_epoch_end", _pass_through)
             setattr(self, "on_test_epoch_end", _pass_through)
             setattr(self, "on_validation_epoch_end", _pass_through)
@@ -206,21 +204,21 @@ class _ImageCallback(Callback):
             self._set_data_iter(trainer, "validation")
         return next(cast(Iterator, self._val_data_iter))
 
-    def get_train_fixed_batch(self, trainer: Trainer) -> Any:
+    def get_fixed_train_batch(self, trainer: Trainer) -> Any:
         if not self.add_fixed_samples:
             return
         if self.fixed_train_batch is None:
             self.fixed_train_batch = self.get_train_batch(trainer)
         return self.fixed_train_batch
 
-    def get_test_fixed_batch(self, trainer: Trainer) -> Any:
+    def get_fixed_test_batch(self, trainer: Trainer) -> Any:
         if not self.add_fixed_samples:
             return
         if self.fixed_test_batch is None:
             self.fixed_test_batch = self.get_test_batch(trainer)
         return self.fixed_test_batch
 
-    def get_val_fixed_batch(self, trainer: Trainer) -> Any:
+    def get_fixed_val_batch(self, trainer: Trainer) -> Any:
         if not self.add_fixed_samples:
             return
         if self.fixed_val_batch is None:
@@ -235,10 +233,6 @@ class _ImageCallback(Callback):
             return args_to(*self._fixed_train_batch, device=self.device)
         return self._fixed_train_batch
 
-    @fixed_train_batch.setter
-    def fixed_train_batch(self, value: Tuple[Any, ...]) -> None:
-        self._fixed_train_batch = args_to(*value, device=self.device)
-
     @property
     def fixed_test_batch(self) -> Optional[Tuple[Any, ...]]:
         if self._fixed_test_batch is None:
@@ -246,10 +240,6 @@ class _ImageCallback(Callback):
         if self.device is not None:
             return args_to(*self._fixed_test_batch, device=self.device)
         return self._fixed_test_batch
-
-    @fixed_test_batch.setter
-    def fixed_test_batch(self, value: Tuple[Any, ...]) -> None:
-        self._fixed_test_batch = args_to(*value, device=self.device)
 
     @property
     def fixed_val_batch(self) -> Optional[Tuple[Any, ...]]:
@@ -259,6 +249,14 @@ class _ImageCallback(Callback):
             return args_to(*self._fixed_val_batch, device=self.device)
         return self._fixed_val_batch
 
+    @fixed_train_batch.setter
+    def fixed_train_batch(self, value: Tuple[Any, ...]) -> None:
+        self._fixed_train_batch = args_to(*value, device="cpu")
+
+    @fixed_test_batch.setter
+    def fixed_test_batch(self, value: Tuple[Any, ...]) -> None:
+        self._fixed_test_batch = args_to(*value, device="cpu")
+
     @fixed_val_batch.setter
     def fixed_val_batch(self, value: Tuple[Any, ...]) -> None:
-        self._fixed_val_batch = args_to(*value, device=self.device)
+        self._fixed_val_batch = args_to(*value, device="cpu")

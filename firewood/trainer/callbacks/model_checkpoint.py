@@ -53,20 +53,37 @@ class ModelCheckpoint(_ModelCheckpoint):
         )
         self.initial_time = time.monotonic()
 
+    def _log_interval_minutes(self, pl_module: pl.LightningModule) -> None:
+        interval_minutes = (time.monotonic() - self.initial_time) / 60
+        pl_module.log(_MINUTE_LOG_NAME, interval_minutes, on_step=True)
+
     def on_train_batch_end(  # type: ignore[override]
         self,
-        trainer: "pl.Trainer",
-        pl_module: "pl.LightningModule",
+        trainer: pl.Trainer,
+        pl_module: pl.LightningModule,
         outputs: STEP_OUTPUT,
         batch: Any,
         batch_idx: int,
     ) -> None:
-        interval_minutes = (time.monotonic() - self.initial_time) / 60
-        pl_module.log(_MINUTE_LOG_NAME, interval_minutes, on_step=True)
-        super().on_train_batch_end(
+        self._log_interval_minutes(pl_module)
+        return super().on_train_batch_end(
             trainer=trainer,
             pl_module=pl_module,
             outputs=outputs,
             batch=batch,
             batch_idx=batch_idx,
+        )
+
+    def on_validation_batch_end(
+        self,
+        trainer: pl.Trainer,
+        pl_module: pl.LightningModule,
+        outputs: Optional[STEP_OUTPUT],
+        batch: Any,
+        batch_idx: int,
+        dataloader_idx: int,
+    ) -> None:
+        self._log_interval_minutes(pl_module)
+        return super().on_validation_batch_end(
+            trainer, pl_module, outputs, batch, batch_idx, dataloader_idx
         )
