@@ -248,7 +248,7 @@ class ConditionInterpolator(_ImageCallback):
                 # sample
                 # generate images
                 img: Tensor = pl_module(
-                    z.to(devoce=pl_module.device, non_blocking=True)
+                    z.to(device=pl_module.device, non_blocking=True)
                 )
 
                 if len(img.size()) == 2:

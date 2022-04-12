@@ -233,6 +233,10 @@ class _ImageCallback(Callback):
             return args_to(*self._fixed_train_batch, device=self.device)
         return self._fixed_train_batch
 
+    @fixed_train_batch.setter
+    def fixed_train_batch(self, value: Tuple[Any, ...]) -> None:
+        self._fixed_train_batch = args_to(*value, device="cpu")
+
     @property
     def fixed_test_batch(self) -> Optional[Tuple[Any, ...]]:
         if self._fixed_test_batch is None:
@@ -241,6 +245,10 @@ class _ImageCallback(Callback):
             return args_to(*self._fixed_test_batch, device=self.device)
         return self._fixed_test_batch
 
+    @fixed_test_batch.setter
+    def fixed_test_batch(self, value: Tuple[Any, ...]) -> None:
+        self._fixed_test_batch = args_to(*value, device="cpu")
+
     @property
     def fixed_val_batch(self) -> Optional[Tuple[Any, ...]]:
         if self._fixed_val_batch is None:
@@ -248,14 +256,6 @@ class _ImageCallback(Callback):
         if self.device is not None:
             return args_to(*self._fixed_val_batch, device=self.device)
         return self._fixed_val_batch
-
-    @fixed_train_batch.setter
-    def fixed_train_batch(self, value: Tuple[Any, ...]) -> None:
-        self._fixed_train_batch = args_to(*value, device="cpu")
-
-    @fixed_test_batch.setter
-    def fixed_test_batch(self, value: Tuple[Any, ...]) -> None:
-        self._fixed_test_batch = args_to(*value, device="cpu")
 
     @fixed_val_batch.setter
     def fixed_val_batch(self, value: Tuple[Any, ...]) -> None:
