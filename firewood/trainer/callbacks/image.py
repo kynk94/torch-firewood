@@ -192,17 +192,29 @@ class _ImageCallback(Callback):
     def get_train_batch(self, trainer: Trainer) -> Any:
         if self._train_data_iter is None:
             self._set_data_iter(trainer, "train")
-        return next(cast(Iterator, self._train_data_iter))
+        try:
+            return next(cast(Iterator, self._train_data_iter))
+        except StopIteration:
+            self._set_data_iter(trainer, "train")
+            return next(cast(Iterator, self._train_data_iter))
 
     def get_test_batch(self, trainer: Trainer) -> Any:
         if self._test_data_iter is None:
             self._set_data_iter(trainer, "test")
-        return next(cast(Iterator, self._test_data_iter))
+        try:
+            return next(cast(Iterator, self._test_data_iter))
+        except StopIteration:
+            self._set_data_iter(trainer, "test")
+            return next(cast(Iterator, self._test_data_iter))
 
     def get_val_batch(self, trainer: Trainer) -> Any:
         if self._val_data_iter is None:
             self._set_data_iter(trainer, "validation")
-        return next(cast(Iterator, self._val_data_iter))
+        try:
+            return next(cast(Iterator, self._val_data_iter))
+        except StopIteration:
+            self._set_data_iter(trainer, "validation")
+            return next(cast(Iterator, self._val_data_iter))
 
     def get_fixed_train_batch(self, trainer: Trainer) -> Any:
         if not self.add_fixed_samples:
@@ -229,34 +241,48 @@ class _ImageCallback(Callback):
     def fixed_train_batch(self) -> Optional[Tuple[Any, ...]]:
         if self._fixed_train_batch is None:
             return None
-        if self.device is not None:
-            return args_to(*self._fixed_train_batch, device=self.device)
-        return self._fixed_train_batch
+        return _return_batch(self._fixed_train_batch, self.device)
 
     @fixed_train_batch.setter
-    def fixed_train_batch(self, value: Tuple[Any, ...]) -> None:
-        self._fixed_train_batch = args_to(*value, device="cpu")
+    def fixed_train_batch(self, value: Any) -> None:
+        if isinstance(value, Tensor):
+            value = value.to(device="cpu")
+        else:
+            value = args_to(*value, device=self.device)
+        self._fixed_train_batch = value
 
     @property
     def fixed_test_batch(self) -> Optional[Tuple[Any, ...]]:
         if self._fixed_test_batch is None:
             return None
-        if self.device is not None:
-            return args_to(*self._fixed_test_batch, device=self.device)
-        return self._fixed_test_batch
+        return _return_batch(self._fixed_test_batch, self.device)
 
     @fixed_test_batch.setter
-    def fixed_test_batch(self, value: Tuple[Any, ...]) -> None:
-        self._fixed_test_batch = args_to(*value, device="cpu")
+    def fixed_test_batch(self, value: Any) -> None:
+        if isinstance(value, Tensor):
+            value = value.to(device="cpu")
+        else:
+            value = args_to(*value, device=self.device)
+        self._fixed_test_batch = value
 
     @property
     def fixed_val_batch(self) -> Optional[Tuple[Any, ...]]:
         if self._fixed_val_batch is None:
             return None
-        if self.device is not None:
-            return args_to(*self._fixed_val_batch, device=self.device)
-        return self._fixed_val_batch
+        return _return_batch(self._fixed_val_batch, self.device)
 
     @fixed_val_batch.setter
-    def fixed_val_batch(self, value: Tuple[Any, ...]) -> None:
-        self._fixed_val_batch = args_to(*value, device="cpu")
+    def fixed_val_batch(self, value: Any) -> None:
+        if isinstance(value, Tensor):
+            value = value.to(device="cpu")
+        else:
+            value = args_to(*value, device=self.device)
+        self._fixed_val_batch = value
+
+
+def _return_batch(batch: Any, device: Optional[DEVICE] = None) -> Any:
+    if device is None:
+        return batch
+    if isinstance(batch, Tensor):
+        return batch.to(device=device, non_blocking=True)
+    return args_to(*batch, device=device)

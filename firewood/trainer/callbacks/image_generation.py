@@ -86,7 +86,6 @@ class LatentImageSampler(_ImageCallback):
         batch_idx: int,
         unused: Optional[int] = 0,
     ) -> None:
-        super().on_train_batch_end
         if self.step is None:
             return
         if trainer.global_step == 0 or trainer.global_step % self.step != 0:
