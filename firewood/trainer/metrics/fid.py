@@ -1,6 +1,6 @@
 import warnings
 from enum import Enum
-from typing import Any, Callable, List, Optional, Tuple, Union
+from typing import Any, Dict, Optional, Tuple, Union
 
 import numpy as np
 import torch
@@ -41,11 +41,13 @@ class FrechetInceptionDistance(FID):
         reset_real_features: bool = True,
         compute_on_cpu: bool = True,
         compute_on_step: bool = False,
+        **kwargs: Dict[str, Any],
     ) -> None:
         super().__init__(
             feature=feature,
             reset_real_features=reset_real_features,
             compute_on_step=compute_on_step,
+            **kwargs,
         )
         self.inception.eval()
         self.inception_resolution: int = getattr(
