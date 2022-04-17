@@ -162,7 +162,6 @@ def main():
     parser.add_argument("--checkpoint", "-ckpt", type=str, default=None)
     parser.add_argument("--resolution", "-r", type=int, default=286)
     parser.add_argument("--batch_size", "-b", type=int, default=32)
-    parser.add_argument("--latent_dim", "-l", type=int, default=100)
     parser.add_argument("--learning_rate", "-lr", type=float, default=2e-4)
     parser.add_argument("--runtime_build", "-rb", action="store_true")
     args = vars(parser.parse_args())
