@@ -38,18 +38,14 @@ class FrechetInceptionDistance(FID):
         self,
         feature: Union[int, nn.Module] = 2048,
         resize_lib: Union[str, RESIZE_LIB] = RESIZE_LIB.TORCH,
+        reset_real_features: bool = True,
         compute_on_cpu: bool = True,
         compute_on_step: bool = False,
-        dist_sync_on_step: bool = False,
-        process_group: Optional[Any] = None,
-        dist_sync_fn: Callable[[Tensor], List[Tensor]] = None,
     ) -> None:
         super().__init__(
             feature=feature,
+            reset_real_features=reset_real_features,
             compute_on_step=compute_on_step,
-            dist_sync_on_step=dist_sync_on_step,
-            process_group=process_group,
-            dist_sync_fn=dist_sync_fn,
         )
         self.inception.eval()
         self.inception_resolution: int = getattr(
