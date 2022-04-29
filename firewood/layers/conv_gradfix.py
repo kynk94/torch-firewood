@@ -8,7 +8,9 @@ import torch.nn as nn
 import torch.nn.functional as F
 import torch.nn.grad as grad
 import torch.nn.init as init
+import torch.onnx.symbolic_helper as sym_help
 from torch import Size, Tensor
+from torch._C import Graph, Value
 from torch.nn.modules.utils import (
     _pair,
     _reverse_repeat_tuple,
@@ -773,6 +775,26 @@ def _load_operation(
             return output
 
         @staticmethod
+        def symbolic(
+            g: torch._C.Graph,
+            input: torch._C.Value,
+            weight: torch._C.Value,
+            bias: Optional[torch._C.Value] = None,
+        ) -> torch._C.Value:
+            return _symbolic_convolution(
+                g,
+                input,
+                weight,
+                bias,
+                stride,
+                padding,
+                dilation,
+                transposed,
+                output_padding,
+                groups,
+            )
+
+        @staticmethod
         # type: ignore[override]
         def backward(
             ctx: Any, grad_output: Tensor
@@ -907,3 +929,54 @@ def _load_operation(
 
     _CONV_CUSTOM_GRAD_CACHE[cache_key] = GFixConvNd
     return GFixConvNd.apply
+
+
+@sym_help.parse_args("v", "v", "v", "is", "is", "is", "i", "is", "i")
+def _symbolic_convolution(
+    g: Graph,
+    input: Value,
+    weight: Value,
+    bias: Optional[Value],
+    stride: Tuple[int, ...],
+    padding: Tuple[int, ...],
+    dilation: Tuple[int, ...],
+    transposed: bool,
+    output_padding: Tuple[int, ...],
+    groups: int,
+) -> Value:
+    """_convolution method of torch/onnx/symbolic_opset9.py"""
+    kernel_shape = sym_help._get_tensor_sizes(weight)[2:]
+    args = [input, weight]
+    if (
+        bias is not None
+        and sym_help._is_none(bias)
+        and sym_help._get_tensor_rank(bias) == 1
+    ):
+        args.append(bias)
+
+    kwargs = {
+        "kernel_shape_i": kernel_shape,
+        "strides_i": stride,
+        # NB: ONNX supports asymmetric padding, whereas PyTorch supports only
+        # symmetric padding
+        "pads_i": padding + padding,
+        "dilations_i": dilation,
+        "group_i": groups,
+    }
+    if (
+        transposed
+        and any(o != 0 for o in output_padding)
+        and len(stride) == len(output_padding)
+    ):
+        kwargs.update({"output_padding_i": output_padding})
+
+    op_name = "ConvTranspose" if transposed else "Conv"
+    n = g.op(op_name, *args, **kwargs)
+
+    if (
+        bias is not None
+        and sym_help._is_none(bias)
+        and sym_help._get_tensor_rank(bias) != 1
+    ):
+        n = g.op("Add", n, bias)
+    return n
