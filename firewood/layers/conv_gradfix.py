@@ -971,12 +971,12 @@ def _symbolic_convolution(
         kwargs.update({"output_padding_i": output_padding})
 
     op_name = "ConvTranspose" if transposed else "Conv"
-    n = g.op(op_name, *args, **kwargs)
+    n = g.op(op_name, *args, **kwargs)  # type: ignore
 
     if (
         bias is not None
         and sym_help._is_none(bias)
         and sym_help._get_tensor_rank(bias) != 1
     ):
-        n = g.op("Add", n, bias)
+        n = g.op("Add", n, bias)  # type: ignore
     return n
