@@ -40,12 +40,12 @@ class FrechetInceptionDistance(FID):
         resize_lib: Union[str, RESIZE_LIB] = RESIZE_LIB.TORCH,
         reset_real_features: bool = True,
         compute_on_cpu: bool = True,
-        **kwargs: Dict[str, Any],
+        **kwargs: Any,
     ) -> None:
+        kwargs.update({"compute_on_cpu": compute_on_cpu})
         super().__init__(
             feature=feature,
             reset_real_features=reset_real_features,
-            compute_on_cpu=compute_on_cpu,
             **kwargs,
         )
         self.inception.eval()
