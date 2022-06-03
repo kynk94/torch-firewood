@@ -40,13 +40,12 @@ class FrechetInceptionDistance(FID):
         resize_lib: Union[str, RESIZE_LIB] = RESIZE_LIB.TORCH,
         reset_real_features: bool = True,
         compute_on_cpu: bool = True,
-        compute_on_step: bool = False,
-        **kwargs: Dict[str, Any],
+        **kwargs: Any,
     ) -> None:
+        kwargs.update({"compute_on_cpu": compute_on_cpu})
         super().__init__(
             feature=feature,
             reset_real_features=reset_real_features,
-            compute_on_step=compute_on_step,
             **kwargs,
         )
         self.inception.eval()
@@ -54,9 +53,6 @@ class FrechetInceptionDistance(FID):
             self.inception, "INPUT_IMAGE_SIZE", 299
         )
         self.resize_lib = _to_resize_lib(resize_lib)
-        self.compute_on_cpu = compute_on_cpu
-        if self.compute_on_cpu:
-            self._to_sync = False
 
     def resize(self, images: Tensor, size: Optional[INT] = None) -> Tensor:
         if self.resize_lib == RESIZE_LIB.TF:
@@ -115,14 +111,8 @@ class FrechetInceptionDistance(FID):
         if self.resize_lib != "tf1":
             images = self.resize(images)
         features: Tensor = self.inception(images.clamp_(0, 255).byte())
-        if self.compute_on_cpu:
-            features = features.detach().cpu()
 
         if is_real:
             self.real_features.append(features)
         else:
             self.fake_features.append(features)
-
-    def compute(self) -> Tensor:
-        output = super().compute()
-        return output.to(device=self.device, non_blocking=True)

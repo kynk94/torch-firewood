@@ -26,6 +26,7 @@ RUN groupadd --gid ${GID} $USERNAME \
     wget \
     pkg-config \
     git \
+    libgl1-mesa-glx \
     python3-dev \
     python3-pip \
     && rm -rf /var/lib/apt/lists/* \
