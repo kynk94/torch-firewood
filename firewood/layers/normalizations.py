@@ -106,9 +106,6 @@ class InstanceNorm(_InstanceNorm):
         affine: bool = False,
         track_running_stats: bool = False,
     ) -> None:
-        assert not (
-            unbiased & affine
-        ), "unbiased and affine cannot be True at the same time"
         super().__init__(
             num_features=num_features,
             eps=eps,
@@ -132,8 +129,11 @@ class InstanceNorm(_InstanceNorm):
             unbiased=True,
             keepdim=True,
         )
-        std = (var + self.eps).sqrt()
-        return (input - mean) / std
+        std = var.add(self.eps).sqrt()
+        output = input.sub(mean).div(std)
+        if self.affine:
+            output = output.mul(self.weight).add(self.bias)
+        return output
 
     def extra_repr(self) -> str:
         return super().extra_repr() + f", unbiased={self.unbiased}"

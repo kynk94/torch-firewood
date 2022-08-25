@@ -79,12 +79,9 @@ class BiasLREqualizer:
             bias.shape
         )
         setattr(module, "bias_init", init)
-        setattr(module, fn.target_name, bias.data)
+        setattr(module, "bias_gain", lr_multiplier)
+        setattr(module, fn.target_name, bias.detach())
         module.register_parameter(name + "_param", Parameter(bias.clone()))
-        module.register_buffer(
-            "bias_gain",
-            torch.tensor(lr_multiplier, dtype=bias.dtype, device=bias.device),
-        )
         return fn
 
     def remove(self, module: nn.Module) -> None:
@@ -93,6 +90,8 @@ class BiasLREqualizer:
         with torch.no_grad():
             bias = self.compute_bias(module)
         delattr(module, self.name + "_param")
+        delattr(module, "bias_init")
+        delattr(module, "bias_gain")
         if hasattr(module, self.name + "_orig"):
             module.register_parameter(
                 self.target_name, Parameter(bias.detach())
@@ -104,7 +103,9 @@ class BiasLREqualizer:
     def compute_bias(self, module: nn.Module) -> Tensor:
         bias: Parameter = getattr(module, self.name + "_param")
         bias_gain = getattr(module, "bias_gain")
-        return bias * bias_gain
+        if bias_gain != 1.0:
+            bias = bias * bias_gain
+        return bias
 
     def __call__(self, module: nn.Module, input: Tensor) -> None:
         setattr(module, self.target_name, self.compute_bias(module))
@@ -171,16 +172,13 @@ class WeightLREqualizer:
         weight: Tensor = utils.popattr(module, fn.target_name).clone()
         setattr(module, "weight_init_std", init_std)
         init.normal_(weight, mean=0, std=init_std / lr_multiplier)
-        setattr(module, fn.target_name, weight.data)
+        setattr(module, fn.target_name, weight.detach())
         module.register_parameter(
             name + "_param", Parameter(weight.detach().clone())
         )
-        fan_in = weight.data[0].numel()
+        fan_in = weight.detach()[0].numel()
         weight_gain = lr_multiplier / math.sqrt(fan_in)
-        module.register_buffer(
-            "weight_gain",
-            torch.tensor(weight_gain, dtype=weight.dtype, device=weight.device),
-        )
+        setattr(module, "weight_gain", weight_gain)
         return fn
 
     def remove(self, module: nn.Module) -> None:
@@ -189,6 +187,8 @@ class WeightLREqualizer:
         with torch.no_grad():
             weight = self.compute_weight(module).clone()
         delattr(module, self.name + "_param")
+        delattr(module, "weight_init_std")
+        delattr(module, "weight_gain")
         if hasattr(module, self.name + "_orig"):
             module.register_parameter(
                 self.target_name, Parameter(weight.detach())
@@ -200,7 +200,9 @@ class WeightLREqualizer:
     def compute_weight(self, module: nn.Module) -> Tensor:
         weight: Parameter = getattr(module, self.name + "_param")
         weight_gain = getattr(module, "weight_gain")
-        return weight * weight_gain
+        if weight_gain != 1.0:
+            weight = weight * weight_gain
+        return weight
 
     def __call__(self, module: nn.Module, input: Tensor) -> None:
         # For the case of applying spectral norm after applying lr equalizer.
@@ -346,7 +348,7 @@ def pop_weight_lr_equalizer(module: nn.Module) -> WeightLREqualizer:
 
 
 class BIAS_ATTRS(TypedDict):
-    bias: Optional[Parameter]
+    bias: Parameter
     bias_init: Optional[Union[float, Tensor]]
     bias_gain: float
     bias_hook: Optional[BiasLREqualizer]
@@ -356,6 +358,10 @@ def pop_bias_attrs(
     module: nn.Module,
 ) -> BIAS_ATTRS:
     name = "bias"
+
+    bias_init = getattr(module, "bias_init", None)
+    bias_gain = getattr(module, "bias_gain", 1.0)
+
     bias_hook = None
     for k, hook in module._forward_pre_hooks.items():
         if isinstance(hook, BiasLREqualizer):
@@ -364,19 +370,20 @@ def pop_bias_attrs(
             name = hook.name
             bias_hook = hook
             break
-    if not hasattr(module, name):
-        return {
-            "bias": None,
-            "bias_init": None,
-            "bias_gain": 1.0,
-            "bias_hook": None,
-        }
-    bias: Parameter = utils.popattr(module, name)
-    module.register_parameter("bias", None)
-    bias_init = getattr(module, "bias_init", None)
-    bias_gain = getattr(module, "bias_gain", 1.0)
     if bias_hook is not None:
         bias_hook.name = "bias"
+
+    if not hasattr(module, name):
+        raise ValueError(f"No bias found in module {module}")
+    bias: Parameter = utils.popattr(module, name)
+    module.register_parameter(name, None)
+
+    if hasattr(module, "bias_init"):
+        delattr(module, "bias_init")
+
+    if hasattr(module, "bias_gain"):
+        delattr(module, "bias_gain")
+
     return {
         "bias": bias,
         "bias_init": bias_init,
@@ -385,32 +392,40 @@ def pop_bias_attrs(
     }
 
 
+def set_bias_attrs(
+    module: nn.Module,
+    bias: Parameter,
+    bias_init: Optional[Union[float, Tensor]] = None,
+    bias_gain: float = 1.0,
+    bias_hook: Optional[BiasLREqualizer] = None,
+    reset_bias: bool = True,
+) -> nn.Module:
+    name = bias_hook.name if bias_hook is not None else "bias"
+    utils.popattr(module, "bias", None)
+    module.register_parameter(name, bias)
+    if bias_hook is None:
+        return module
+
+    BiasLREqualizer.apply(
+        module=module,
+        name=name,
+        lr_multiplier=bias_gain,
+        init=bias_init,
+        recursive=False,
+    )
+    if not reset_bias:
+        delattr(module, name + "_param")
+        module.register_parameter(name + "_param", Parameter(bias.detach()))
+    return module
+
+
 def transfer_bias_attrs(
     source_module: nn.Module,
     target_module: nn.Module,
-    preserve_source_bias: bool = False,
+    reset_bias: bool = True,
 ) -> nn.Module:
-    bias_attrs = pop_bias_attrs(source_module)
-    if bias_attrs["bias"] is None:
-        raise ValueError("Source module has no bias")
-    if bias_attrs["bias_hook"] is None:
-        utils.popattr(target_module, "bias", None)
-        target_module.register_parameter("bias", bias_attrs["bias"])
-        return target_module
-
-    pop_bias_attrs(target_module)
-    name = bias_attrs["bias_hook"].name
-    target_module.register_parameter(name, bias_attrs["bias"])
-    BiasLREqualizer.apply(
+    return set_bias_attrs(
         module=target_module,
-        name=name,
-        lr_multiplier=bias_attrs["bias_gain"],
-        init=bias_attrs["bias_init"],
-        recursive=False,
+        reset_bias=reset_bias,
+        **pop_bias_attrs(source_module),
     )
-    if preserve_source_bias:
-        delattr(target_module, name + "_param")
-        target_module.register_parameter(
-            name + "_param", Parameter(bias_attrs["bias"].data)
-        )
-    return target_module

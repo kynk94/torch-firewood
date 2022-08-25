@@ -3,7 +3,6 @@ from typing import Any, Optional, cast
 
 import torch.nn as nn
 
-from firewood import utils
 from firewood.layers.biased_activations import BiasedActivation
 from firewood.layers.clamp import Clamp
 
@@ -22,13 +21,12 @@ SUPPORT_CUSTOM_GAIN = {"silu": math.sqrt(2.0)}
 def get(
     activation: Optional[str],
     alpha: Optional[float] = None,
-    gain: Optional[float] = None,
+    gain: Optional[float] = 1.0,
     clamp: Optional[float] = None,
     inplace: bool = True,
-    bias_gain: float = 1.0,
     **kwargs: Any,
 ) -> Optional[nn.Module]:
-    activation = utils.normalize_activation_name(activation)
+    activation = normalize_activation_name(activation)
     if activation in {"leaky_relu", "elu"} and alpha is None:
         alpha = 0.2 if activation == "leaky_relu" else 1.0
     if gain is None:
@@ -47,7 +45,6 @@ def get(
             activation=activation,
             alpha=alpha,
             gain=gain,
-            bias_gain=bias_gain,
             clamp=clamp,
         )
 
@@ -85,3 +82,14 @@ def get(
     raise NotImplementedError(
         f"Received activation is not implemented. Received: {activation}"
     )
+
+
+def normalize_activation_name(activation: Optional[str]) -> str:
+    if activation is None or len(activation) == 0:
+        return "linear"
+    activation = activation.lower()
+    if activation == "lrelu":
+        return "leaky_relu"
+    if activation == "swish":
+        return "silu"
+    return activation

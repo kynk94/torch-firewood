@@ -1,5 +1,6 @@
 import functools
 import math
+import sys
 import warnings
 from typing import Any, Callable, Dict, Optional, Tuple, Type, Union, cast
 
@@ -82,13 +83,15 @@ def get_upfirdn_layer(
     flip_kernel: bool = False,
     device: Optional[DEVICE] = None,
 ) -> Tuple[Optional["_UpFirDnNd"], Optional["_UpFirDnNd"]]:
+    if rank == 0:
+        return None, None
     upfir: Optional[_UpFirDnNd] = None
     firdown: Optional[_UpFirDnNd] = None
     up = utils.normalize_int_tuple(up, rank)
     down = utils.normalize_int_tuple(down, rank)
+    __class__: _UpFirDnNd = getattr(sys.modules[__name__], f"UpFirDn{rank}d")
     if any(u > 1 for u in up):
-        upfir = _UpFirDnNd(
-            rank=rank,
+        upfir = __class__(
             kernel=kernel,
             up=up,
             down=1,
@@ -101,8 +104,7 @@ def get_upfirdn_layer(
         )
         padding = 0
     if any(d > 1 for d in down) or (upfir is None and kernel is not None):
-        firdown = _UpFirDnNd(
-            rank=rank,
+        firdown = __class__(
             kernel=kernel,
             up=1,
             down=down,
@@ -505,6 +507,7 @@ class UpFirDn1d(_UpFirDnNd):
         gain: float = 1.0,
         normalize_kernel: bool = True,
         flip_kernel: bool = False,
+        **kwargs: Any,
     ) -> None:
         super().__init__(
             rank=1,
@@ -515,6 +518,7 @@ class UpFirDn1d(_UpFirDnNd):
             gain=gain,
             normalize_kernel=normalize_kernel,
             flip_kernel=flip_kernel,
+            **kwargs,
         )
 
 
@@ -528,6 +532,7 @@ class UpFirDn2d(_UpFirDnNd):
         gain: float = 1.0,
         normalize_kernel: bool = True,
         flip_kernel: bool = False,
+        **kwargs: Any,
     ) -> None:
         super().__init__(
             rank=2,
@@ -538,6 +543,7 @@ class UpFirDn2d(_UpFirDnNd):
             gain=gain,
             normalize_kernel=normalize_kernel,
             flip_kernel=flip_kernel,
+            **kwargs,
         )
 
 
@@ -551,6 +557,7 @@ class UpFirDn3d(_UpFirDnNd):
         gain: float = 1.0,
         normalize_kernel: bool = True,
         flip_kernel: bool = False,
+        **kwargs: Any,
     ) -> None:
         super().__init__(
             rank=3,
@@ -561,4 +568,5 @@ class UpFirDn3d(_UpFirDnNd):
             gain=gain,
             normalize_kernel=normalize_kernel,
             flip_kernel=flip_kernel,
+            **kwargs,
         )

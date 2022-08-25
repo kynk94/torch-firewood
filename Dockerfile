@@ -87,7 +87,7 @@ RUN sudo chmod -R 777 ${HOME}/torch-firewood/
 ARG USE_JUPYTER="false"
 SHELL ["conda", "run", "--no-capture-output", "/bin/bash", "-c"]
 RUN $PIP_INSTALL \
-    torch==1.10.2+cu113 torchvision==0.11.3+cu113 torchaudio==0.10.2+cu113 -f https://download.pytorch.org/whl/cu113/torch_stable.html \
+    torch torchvision torchaudio --extra-index-url https://download.pytorch.org/whl/cu116 \
     -r ${HOME}/torch-firewood/requirements-dev.txt \
     # conda only packages
     # && conda install -y -c conda-forge

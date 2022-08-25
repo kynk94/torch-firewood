@@ -1,4 +1,4 @@
-// Copyright (c) 2021, NVIDIA CORPORATION.  All rights reserved.
+// Copyright (c) 2021, NVIDIA CORPORATION & AFFILIATES.  All rights reserved.
 //
 // NVIDIA CORPORATION and its licensors retain all intellectual property
 // and proprietary rights in and to this software, related documentation
@@ -89,11 +89,12 @@ __global__ void bias_act_kernel(bias_act_kernel_params p)
         }
 
         // elu
+        // Official implementation does not support alpha.
         if (A == 6)
         {
-            if (G == 0) y = (x >= 0) ? x : exp(x) - one;
-            if (G == 1) y = (yy >= 0) ? x : x * (yy + one);
-            if (G == 2) y = (yy >= 0) ? 0 : x * (yy + one);
+            if (G == 0) y = (x >= 0) ? x : alpha * (exp(x) - one);
+            if (G == 1) y = (yy >= 0) ? x : x * (yy + alpha);
+            if (G == 2) y = (yy >= 0) ? 0 : x * (yy + alpha);
         }
 
         // selu
