@@ -1,5 +1,3 @@
-import itertools
-
 import torch
 import torch.nn as nn
 from torch import Tensor
@@ -16,26 +14,6 @@ def test_is_cuda():
     assert not torch_op.is_cuda("cpu")
     assert not torch_op.is_cuda(torch.device("cpu"))
     assert not torch_op.is_cuda(None)
-
-
-def test_normalize_activation_name():
-    assert torch_op.normalize_activation_name("relu") == "relu"
-    assert torch_op.normalize_activation_name("lrelu") == "leaky_relu"
-    assert torch_op.normalize_activation_name("swish") == "silu"
-    assert torch_op.normalize_activation_name(None) == "linear"
-    others = ["linear", "sigmoid", "tanh", "softmax"]
-    for other in others:
-        assert torch_op.normalize_activation_name(other) == other
-
-
-def test_normalize_op_order():
-    op_orders = tuple("".join(i) for i in itertools.permutations("WNA", 3))
-    for op_order in op_orders:
-        assert torch_op.normalize_op_order(op_order) == op_order
-    with expect_raise(ValueError):
-        torch_op.normalize_op_order("")
-    with expect_raise(ValueError):
-        torch_op.normalize_op_order("WAA")
 
 
 def test_get_in_out_features():

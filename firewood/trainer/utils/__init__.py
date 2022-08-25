@@ -6,7 +6,7 @@ from firewood.utils.common import get_last_file
 
 def find_checkpoint(
     path: str,
-    regex: str = "*.pt*",
+    regex: str = "*.*pt*",  # .ckpt, .pt, .pth
     key: Optional[Union[Callable, str]] = None,
 ) -> str:
     if not os.path.exists(path):

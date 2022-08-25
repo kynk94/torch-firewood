@@ -1,4 +1,3 @@
-import re
 from typing import Any, Optional, Sequence, Tuple, Union
 
 import torch
@@ -75,28 +74,14 @@ def is_cuda(device: Union[torch.device, int, str, None]) -> bool:
     return device.type == "cuda"
 
 
-def normalize_activation_name(activation: Optional[str]) -> str:
-    if activation is None or len(activation) == 0:
-        return "linear"
-    activation = activation.lower()
-    if activation == "lrelu":
-        return "leaky_relu"
-    if activation == "swish":
-        return "silu"
-    return activation
-
-
-def normalize_op_order(op_order: str) -> str:
-    op_order = op_order.upper()
-    if len(op_order) != 3:
-        raise ValueError("Op order must be 3 characters long.")
-    op_order = re.sub("[^ANW]", "W", op_order)
-    for char in "ANW":
-        if op_order.count(char) != 1:
-            raise ValueError(
-                f"Op order must contain exactly one {char} character."
-            )
-    return op_order
+def get_rank(module: nn.Module) -> int:
+    rank: Optional[int] = getattr(module, "rank", None)
+    if rank is not None:
+        return rank
+    weight: Optional[Tensor] = getattr(module, "weight", None)
+    if weight is not None:
+        return weight.ndim - 2
+    raise ValueError(f"Could not find `rank` in {module}.")
 
 
 def get_in_out_features(module: nn.Module) -> Tuple[int, int]:
@@ -110,7 +95,7 @@ def get_in_out_features(module: nn.Module) -> Tuple[int, int]:
         weight: Optional[Tensor] = getattr(module, "weight", None)
         if weight is None:
             raise ValueError(
-                f"Could not find in_features or out_features in {module}."
+                f"Could not find `in_features` or `out_features` in {module}."
             )
         out_features, in_features = weight.shape[:2]
     return in_features, out_features
@@ -120,6 +105,8 @@ def _single_padding(
     obj: Union[SAME_PADDING, INT]
 ) -> Union[SAME_PADDING, Tuple[int]]:
     if isinstance(obj, str):
+        if obj.lower() != "same":
+            raise ValueError(f"Unknown padding: {obj}")
         return obj
     return _single(obj)
 
@@ -128,6 +115,8 @@ def _pair_padding(
     obj: Union[SAME_PADDING, INT]
 ) -> Union[SAME_PADDING, Tuple[int, int]]:
     if isinstance(obj, str):
+        if obj.lower() != "same":
+            raise ValueError(f"Unknown padding: {obj}")
         return obj
     return _pair(obj)
 
@@ -136,5 +125,7 @@ def _triple_padding(
     obj: Union[SAME_PADDING, INT]
 ) -> Union[SAME_PADDING, Tuple[int, int, int]]:
     if isinstance(obj, str):
+        if obj.lower() != "same":
+            raise ValueError(f"Unknown padding: {obj}")
         return obj
     return _triple(obj)

@@ -14,25 +14,23 @@ from firewood.layers import initializers
 class Bias(nn.Module):
     def __init__(
         self,
-        bias: Optional[Union[Tensor, INT, FLOAT]] = None,
-        bias_gain: float = 1.0,
         size: Optional[INT] = None,
+        bias_add_dim: int = 1,
         initializer: str = "zeros",
+        dtype: Optional[torch.dtype] = None,
     ) -> None:
         super().__init__()
+        self.bias_add_dim = bias_add_dim
         self.initializer = initializer
-        if isinstance(bias, Tensor):
-            self.bias = Parameter(bias)
-        elif bias is not None:
-            self.bias = Parameter(torch.tensor(bias, dtype=torch.float32))
-        elif size is not None:
+        self.dtype = dtype or torch.float32
+        if size is not None:
             if isinstance(size, Sequence):
                 size = cast(Tuple[int, ...], size)
-            self.bias = Parameter(torch.zeros(size, dtype=torch.float32))
-            self.reset_parameters()
+            self.bias = Parameter(torch.zeros(size, dtype=self.dtype))
         else:
             self.register_parameter("bias", None)
-        self.bias_gain = bias_gain
+
+        self.reset_parameters()
 
     def reset_parameters(self) -> None:
         if self.bias is None:
@@ -45,19 +43,32 @@ class Bias(nn.Module):
 
     def register_bias(
         self,
-        bias: Tensor,
-        bias_gain: Optional[float] = None,
+        bias: Union[Tensor, INT, FLOAT],
     ) -> None:
+        if bias is None:
+            raise ValueError("bias cannot be None")
         delattr(self, "bias")
-        self.bias = Parameter(bias)
-        if bias_gain is not None:
-            self.bias_gain = bias_gain
+        if isinstance(bias, Tensor):
+            self.bias = Parameter(bias.detach().to(dtype=self.dtype))
+        else:
+            self.bias = Parameter(torch.tensor(bias, dtype=self.dtype))
 
     def forward(self, input: Tensor) -> Tensor:
-        bias: Tensor = self.bias
-        if bias is None:
-            return input
-        if self.bias_gain != 1.0:
-            bias = bias * self.bias_gain
-        bias = bias.view([-1 if i == 1 else 1 for i in range(input.ndim)])
-        return input + bias.to(input.dtype)
+        if self.bias is None:
+            raise ValueError(
+                "bias is not registered. Call `register_bias` first."
+            )
+        bias = self.bias.view(
+            [-1 if i == self.bias_add_dim else 1 for i in range(input.ndim)]
+        )
+        return input + bias.to(dtype=input.dtype)
+
+    def extra_repr(self) -> str:
+        return ", ".join(
+            [
+                f"size={self.bias.shape if self.bias is not None else None}",
+                f"bias_add_dim={self.bias_add_dim}",
+                f"initializer={self.initializer}",
+                f"dtype={self.dtype}",
+            ]
+        )

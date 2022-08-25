@@ -38,7 +38,7 @@ def test_get_activation():
     assert isinstance(clamp, Clamp)
 
     for activation in {"leaky_relu", "silu"}:
-        biased_activation = activations.get(activation)
+        biased_activation = activations.get(activation, gain=None)
         assert isinstance(biased_activation, BiasedActivation)
 
     no_gain_activations = (
@@ -52,3 +52,13 @@ def test_get_activation():
             kwargs.update(threshold=0.5, value=0.5)
         activation = activations.get(name, **kwargs)
         assert isinstance(activation, AVAILABLE_ACTIVATIONS[name])
+
+
+def test_normalize_activation_name():
+    assert activations.normalize_activation_name("relu") == "relu"
+    assert activations.normalize_activation_name("lrelu") == "leaky_relu"
+    assert activations.normalize_activation_name("swish") == "silu"
+    assert activations.normalize_activation_name(None) == "linear"
+    others = ["linear", "sigmoid", "tanh", "softmax"]
+    for other in others:
+        assert activations.normalize_activation_name(other) == other

@@ -71,9 +71,9 @@ class WeightDeNormOutput:
         bias: Optional[Union[Tensor, Parameter]] = getattr(module, "bias", None)
         if isinstance(bias, Parameter):
             delattr(module, "bias")
-            module.register_parameter(name + "_orig", Parameter(bias.data))
+            module.register_parameter(name + "_orig", Parameter(bias.detach()))
             setattr(fn, "target_name", name + "_orig")
-            setattr(module, "bias", bias.data)
+            setattr(module, "bias", bias.detach())
         return fn
 
     def remove(self, module: nn.Module) -> None:
@@ -146,9 +146,11 @@ class WeightDeNorm:
         weight: Union[Tensor, Parameter] = getattr(module, name)
         if isinstance(weight, Parameter):
             delattr(module, name)
-            module.register_parameter(name + "_orig", Parameter(weight.data))
+            module.register_parameter(
+                name + "_orig", Parameter(weight.detach())
+            )
             setattr(fn, "target_name", name + "_orig")
-            setattr(module, name, weight.data)
+            setattr(module, name, weight.detach())
 
         setattr(
             fn, "output_hook", WeightDeNormOutput.apply(module, out_features)

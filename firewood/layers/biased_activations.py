@@ -1,6 +1,6 @@
 import functools
 import warnings
-from typing import Any, Callable, Dict, Optional, Tuple, Type, TypedDict, Union
+from typing import Any, Callable, Dict, Optional, Tuple, Type, TypedDict
 
 import numpy as np
 import torch
@@ -12,6 +12,7 @@ from firewood import utils
 from firewood.common.backend import runtime_build
 from firewood.common.constant import NULL_TENSOR
 from firewood.common.types import DEVICE
+from firewood.layers import activations
 
 _CUDA_OPERATION_CACHE: Dict[
     Tuple[str, float, float, float, int], Type[torch.autograd.Function]
@@ -60,15 +61,6 @@ def _load_cuda_extension() -> Optional[Callable[..., Tensor]]:
     return _PRE_BUILD_CUDA_BIASACT_EXTENSION
 
 
-class ACTIVATION(TypedDict):
-    func: Callable
-    default_alpha: float
-    default_gain: Optional[float]
-    cuda_operation_index: int
-    gradient_reference: str
-    has_second_grad: bool
-
-
 def _linear(x: Tensor, *args: Any, **kwargs: Any) -> Tensor:
     return x
 
@@ -105,12 +97,21 @@ def _silu(x: Tensor, *args: Any, **kwargs: Any) -> Tensor:
     return F.silu(x)
 
 
+class ACTIVATION(TypedDict):
+    func: Callable
+    default_alpha: float
+    default_gain: Optional[float]
+    cuda_operation_index: int
+    gradient_reference: str
+    has_second_grad: bool
+
+
 # If default_gain is None, then nn.init.calculate_gain() is used.
 ACTIVATIONS: Dict[str, ACTIVATION] = {
     "linear": {
         "func": _linear,
         "default_alpha": 1.0,
-        "default_gain": None,
+        "default_gain": 1,
         "cuda_operation_index": 1,
         "gradient_reference": "",
         "has_second_grad": False,
@@ -134,7 +135,9 @@ ACTIVATIONS: Dict[str, ACTIVATION] = {
     "tanh": {
         "func": _tanh,
         "default_alpha": 1.0,
-        "default_gain": None,
+        # Mostly, tanh is used to fit the image in the range of [-1, 1],
+        # so gain is defined as 1.
+        "default_gain": 1,
         "cuda_operation_index": 4,
         "gradient_reference": "y",
         "has_second_grad": True,
@@ -142,7 +145,7 @@ ACTIVATIONS: Dict[str, ACTIVATION] = {
     "sigmoid": {
         "func": _sigmoid,
         "default_alpha": 1.0,
-        "default_gain": None,
+        "default_gain": 1,
         "cuda_operation_index": 5,
         "gradient_reference": "y",
         "has_second_grad": True,
@@ -157,6 +160,7 @@ ACTIVATIONS: Dict[str, ACTIVATION] = {
     },
     "selu": {
         "func": _selu,
+        # Does not use this alpha, use defined in cuda code.
         "default_alpha": 1.0,
         "default_gain": None,
         "cuda_operation_index": 7,
@@ -191,15 +195,13 @@ class BiasedActivation(nn.Module):
         alpha: Optional[float] = None,
         gain: Optional[float] = None,
         clamp: Optional[float] = None,
-        bias_gain: Optional[float] = 1.0,
         bias_add_dim: int = 1,
         device: Optional[DEVICE] = None,
     ) -> None:
         super().__init__()
         self.device = torch.device(device or "cpu")
 
-        self.activation = utils.normalize_activation_name(activation)
-        self.bias_gain = bias_gain
+        self.activation = activations.normalize_activation_name(activation)
         self.bias_add_dim = bias_add_dim
 
         if self.activation not in ACTIVATIONS:
@@ -224,18 +226,14 @@ class BiasedActivation(nn.Module):
             clamp=self.clamp,
             bias_add_dim=self.bias_add_dim,
         )
+        self.register_parameter("bias", None)
         self.to(device=self.device)
 
     def forward(
         self,
         input: Tensor,
-        bias: Optional[Union[Callable[..., Tensor], Tensor]] = None,
     ) -> Tensor:
-        if bias is not None and callable(bias):
-            bias = bias()
-        if bias is not None and self.bias_gain != 1.0:
-            bias = self.bias_gain * bias
-        return self.operation(input, bias)
+        return self.operation(input, self.bias)
 
     def _cpu(self) -> None:
         self.device = torch.device("cpu")
