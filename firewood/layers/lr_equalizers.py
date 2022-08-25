@@ -348,7 +348,7 @@ def pop_weight_lr_equalizer(module: nn.Module) -> WeightLREqualizer:
 
 
 class BIAS_ATTRS(TypedDict):
-    bias: Optional[Parameter]
+    bias: Parameter
     bias_init: Optional[Union[float, Tensor]]
     bias_gain: float
     bias_hook: Optional[BiasLREqualizer]
@@ -373,6 +373,8 @@ def pop_bias_attrs(
     if bias_hook is not None:
         bias_hook.name = "bias"
 
+    if not hasattr(module, name):
+        raise ValueError(f"No bias found in module {module}")
     bias: Parameter = utils.popattr(module, name)
     module.register_parameter(name, None)
 
@@ -399,7 +401,7 @@ def set_bias_attrs(
     reset_bias: bool = True,
 ) -> nn.Module:
     name = bias_hook.name if bias_hook is not None else "bias"
-    utils.popattr(module, "bias")
+    utils.popattr(module, "bias", None)
     module.register_parameter(name, bias)
     if bias_hook is None:
         return module
@@ -422,9 +424,8 @@ def transfer_bias_attrs(
     target_module: nn.Module,
     reset_bias: bool = True,
 ) -> nn.Module:
-    bias_attrs = pop_bias_attrs(source_module)
-    if bias_attrs.get("bias") is None:
-        raise ValueError("Source module does not have bias.")
     return set_bias_attrs(
-        module=target_module, reset_bias=reset_bias, **bias_attrs
+        module=target_module,
+        reset_bias=reset_bias,
+        **pop_bias_attrs(source_module),
     )

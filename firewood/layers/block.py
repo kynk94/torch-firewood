@@ -103,13 +103,8 @@ class Block(nn.Module):
 
         # set dropout
         if isinstance(dropout, float) and 0 < dropout < 1:
-            if self.rank == 2:
-                dropout_layer = nn.Dropout2d(dropout)
-            elif self.rank == 3:
-                dropout_layer = nn.Dropout3d(dropout)
-            else:
-                dropout_layer = nn.Dropout(dropout)
-            self.update_layer_in_order("dropout", dropout_layer)
+            dropout_class = getattr(nn, f"Dropout{self.rank}d", nn.Dropout)
+            self.update_layer_in_order("dropout", dropout_class(dropout))
 
         weight_normalization_args = weight_normalization_args or dict()
         self.weight_normalization = weight_normalization or ()
@@ -305,7 +300,7 @@ class Block(nn.Module):
         Unravel fused layers if the operation is faster than the fused.
         """
 
-        def __unravel_biased_activation():
+        def __unravel_biased_activation() -> None:
             if "activation" not in self.layers:
                 return
             activation_layer = self.layers.get_submodule("activation")
