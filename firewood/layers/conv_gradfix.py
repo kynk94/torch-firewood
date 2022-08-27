@@ -28,6 +28,7 @@ from firewood.common.constant import NULL_TENSOR
 from firewood.common.types import DEVICE, INT, SAME_PADDING
 from firewood.layers import initializers
 from firewood.utils import _pair_padding, _single_padding, _triple_padding
+from firewood.utils.common import is_newer_torch
 
 # Forcefully disable computation of gradients with respect to the weights.
 #
@@ -63,7 +64,7 @@ _CONV_CUSTOM_GRAD_CACHE: Dict[
 _CUDNN_FLAGS = [
     torch.backends.cudnn.benchmark,
     torch.backends.cudnn.deterministic,
-    torch.backends.cudnn.allow_tf32,  # type: ignore
+    torch.backends.cudnn.allow_tf32,
 ]
 
 
@@ -604,19 +605,40 @@ def conv_weight_cudnn(
     """
     support conv2d, conv3d
     """
-    operation = torch._C._jit_get_operation(
-        "aten::cudnn_convolution_backward_weight"
-    )
-    return operation(
-        weight_size,
-        grad_output,
-        input,
-        padding,
-        stride,
-        dilation,
-        groups,
-        *_CUDNN_FLAGS,
-    )
+    if utils.is_newer_torch("1.11.0"):
+        operation_name = "aten::convolution_backward"
+        operation = torch._C._jit_get_operation(operation_name)[0]
+        weight = torch.zeros(1, device=input.device, dtype=input.dtype).expand(
+            weight_size
+        )
+        output_index = 1
+        output_mask = [False] * 3
+        output_mask[output_index] = True
+        return operation(
+            grad_output,
+            input,
+            weight,
+            None,
+            stride,
+            padding,
+            dilation,
+            False,
+            [0],
+            groups,
+            output_mask,
+        )[output_index]
+    else:
+        operation_name = "aten::cudnn_convolution_backward_weight"
+        return torch._C._jit_get_operation(operation_name)(  # type: ignore
+            weight_size,
+            grad_output,
+            input,
+            padding,
+            stride,
+            dilation,
+            groups,
+            *_CUDNN_FLAGS,
+        )
 
 
 def conv_transpose_weight_cudnn(
@@ -631,19 +653,40 @@ def conv_transpose_weight_cudnn(
     """
     support conv_transpose2d, conv_transpose3d
     """
-    operation = torch._C._jit_get_operation(
-        "aten::cudnn_convolution_transpose_backward_weight"
-    )
-    return operation(
-        weight_size,
-        grad_output,
-        input,
-        padding,
-        stride,
-        dilation,
-        groups,
-        *_CUDNN_FLAGS,
-    )
+    if utils.is_newer_torch("1.11.0"):
+        operation_name = "aten::convolution_backward"
+        operation = torch._C._jit_get_operation(operation_name)[0]
+        weight = torch.zeros(1, device=input.device, dtype=input.dtype).expand(
+            weight_size
+        )
+        output_index = 1
+        output_mask = [False] * 3
+        output_mask[output_index] = True
+        return operation(
+            grad_output,
+            input,
+            weight,
+            None,
+            stride,
+            padding,
+            dilation,
+            True,
+            [0],
+            groups,
+            output_mask,
+        )[output_index]
+    else:
+        operation_name = "aten::cudnn_convolution_backward_weight"
+        return torch._C._jit_get_operation(operation_name)(  # type: ignore
+            weight_size,
+            grad_output,
+            input,
+            padding,
+            stride,
+            dilation,
+            groups,
+            *_CUDNN_FLAGS,
+        )
 
 
 def conv_transpose1d_weight(

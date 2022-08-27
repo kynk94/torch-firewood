@@ -611,7 +611,7 @@ def concat_and_split_datasets(
     indices: List[Optional[Sequence[int]]] = []
     start = 0
     for i in range(3):
-        end = round(sum(split[: i + 1]) * len(datasets))
+        end = round(sum(split[: i + 1]) * len(datasets))  # type: ignore
         if start == end:
             indices.append(None)
         else:
@@ -619,7 +619,7 @@ def concat_and_split_datasets(
         start = end
 
     if shuffle:
-        index_list = list(range(len(datasets)))
+        index_list = list(range(len(datasets)))  # type: ignore
         random.shuffle(index_list)
         indices = [
             index_list[i.start : i.stop] if isinstance(i, range) else None
