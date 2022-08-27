@@ -241,7 +241,6 @@ class WeightDeNorm:
 
     def _weight_modulation(self, weight: Tensor, gamma: Tensor) -> Tensor:
         rank = weight.ndim - 2
-        batch_size = gamma.size(0)
         batch_size, out_features = gamma.shape[:2]
         gamma = gamma.view(batch_size, 1, out_features, *(1,) * rank)
         return torch.mul(weight.unsqueeze(0), gamma)

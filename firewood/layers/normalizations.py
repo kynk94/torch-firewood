@@ -114,9 +114,14 @@ class InstanceNorm(_InstanceNorm):
             track_running_stats=track_running_stats,
         )
         self.unbiased = unbiased
+        self.__fake_no_batch_dim = 4  # rank + 2, default is rank 2
 
     def _check_input_dim(self, input: Tensor) -> None:
+        self.__fake_no_batch_dim = input.dim() + 1
         return
+
+    def _get_no_batch_dim(self) -> int:
+        return self.__fake_no_batch_dim
 
     def forward(self, input: Tensor) -> Tensor:
         # default operation does not support bessel correction
