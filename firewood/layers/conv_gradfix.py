@@ -64,7 +64,7 @@ _CONV_CUSTOM_GRAD_CACHE: Dict[
 _CUDNN_FLAGS = [
     torch.backends.cudnn.benchmark,
     torch.backends.cudnn.deterministic,
-    torch.backends.cudnn.allow_tf32,  # type: ignore
+    torch.backends.cudnn.allow_tf32,
 ]
 
 
@@ -629,8 +629,7 @@ def conv_weight_cudnn(
         )[output_index]
     else:
         operation_name = "aten::cudnn_convolution_backward_weight"
-        operation = torch._C._jit_get_operation(operation_name)
-        return operation(
+        return torch._C._jit_get_operation(operation_name)(  # type: ignore
             weight_size,
             grad_output,
             input,
@@ -678,8 +677,7 @@ def conv_transpose_weight_cudnn(
         )[output_index]
     else:
         operation_name = "aten::cudnn_convolution_backward_weight"
-        operation = torch._C._jit_get_operation(operation_name)
-        return operation(
+        return torch._C._jit_get_operation(operation_name)(  # type: ignore
             weight_size,
             grad_output,
             input,

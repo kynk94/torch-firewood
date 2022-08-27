@@ -265,7 +265,7 @@ def _setup_kernel(
             ein_source.append("".join(base))
             ein_target.append(ein_dims[i])
         einstr = ",".join(ein_source) + "->" + "".join(ein_target)
-        kernel = cast(Tensor, torch.einsum(einstr, *kernels))
+        kernel = torch.einsum(einstr, *kernels)
 
     if normalize_kernel:
         kernel = kernel / kernel.abs().sum()
