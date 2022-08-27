@@ -676,7 +676,7 @@ def conv_transpose_weight_cudnn(
             output_mask,
         )[output_index]
     else:
-        operation_name = "aten::cudnn_convolution_backward_weight"
+        operation_name = "aten::cudnn_convolution_transpose_backward_weight"
         return torch._C._jit_get_operation(operation_name)(  # type: ignore
             weight_size,
             grad_output,
