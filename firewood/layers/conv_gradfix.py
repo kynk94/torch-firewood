@@ -819,11 +819,11 @@ def _load_operation(
 
         @staticmethod
         def symbolic(
-            g: torch._C.Graph,
-            input: torch._C.Value,
-            weight: torch._C.Value,
-            bias: Optional[torch._C.Value] = None,
-        ) -> torch._C.Value:
+            g: Graph,
+            input: Value,
+            weight: Value,
+            bias: Optional[Value] = None,
+        ) -> Value:
             return _symbolic_convolution(
                 g,
                 input,
