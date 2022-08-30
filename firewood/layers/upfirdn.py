@@ -148,22 +148,22 @@ class _UpFirDnNd(nn.Module):
         self.upsample_mode = upsample_mode
         self.ignore_same_padding = ignore_same_padding
 
-        self.kernel = Parameter(
-            _setup_kernel(
+        self.register_buffer(
+            name="kernel",
+            tensor=_setup_kernel(
                 rank=self.rank,
                 kernel=kernel,
                 gain=1.0,
                 normalize_kernel=self.normalize_kernel,
                 flip_kernel=self.flip_kernel,
             ),
-            requires_grad=False,
         )
 
         padding = _parse_padding(rank=rank, padding=padding)
         if not self.ignore_same_padding:
             same_padding = _calc_padding(
                 rank=rank,
-                kernel_size=self.kernel.shape,
+                kernel_size=cast(INT, self.kernel.shape),
                 up=self.up,
                 down=self.down,
             )
@@ -344,7 +344,8 @@ def firNd(
     C = input.size(1)
     if gain != 1.0:
         kernel = kernel * gain ** (kernel.ndim / rank)
-    kernel = kernel.view(1, 1, *kernel.shape).expand(C, 1, *kernel.shape)
+    kernel = kernel.view(1, 1, *kernel.shape)
+    kernel = torch.cat([kernel for _ in range(C)], dim=0)
 
     if kernel.ndim == input.ndim:
         return conv(input, kernel, groups=C)
