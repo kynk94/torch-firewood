@@ -1,6 +1,7 @@
 import contextlib
 import itertools
 import math
+import sys
 from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union, cast
 
 import torch
@@ -608,6 +609,7 @@ def conv_weight_cudnn(
     if utils.is_newer_torch("1.11.0"):
         operation_name = "aten::convolution_backward"
         operation = torch._C._jit_get_operation(operation_name)[0]
+        rank = len(weight_size) - 2
         weight = torch.zeros(1, device=input.device, dtype=input.dtype).expand(
             weight_size
         )
@@ -619,9 +621,9 @@ def conv_weight_cudnn(
             input,
             weight,
             None,
-            stride,
-            padding,
-            dilation,
+            utils.normalize_int_tuple(stride, rank),
+            utils.normalize_int_tuple(padding, rank),
+            utils.normalize_int_tuple(dilation, rank),
             False,
             [0],
             groups,
@@ -656,6 +658,7 @@ def conv_transpose_weight_cudnn(
     if utils.is_newer_torch("1.11.0"):
         operation_name = "aten::convolution_backward"
         operation = torch._C._jit_get_operation(operation_name)[0]
+        rank = len(weight_size) - 2
         weight = torch.zeros(1, device=input.device, dtype=input.dtype).expand(
             weight_size
         )
@@ -667,9 +670,9 @@ def conv_transpose_weight_cudnn(
             input,
             weight,
             None,
-            stride,
-            padding,
-            dilation,
+            utils.normalize_int_tuple(stride, rank),
+            utils.normalize_int_tuple(padding, rank),
+            utils.normalize_int_tuple(dilation, rank),
             True,
             [0],
             groups,
@@ -717,7 +720,7 @@ def conv_transpose2d_weight(
     )
 
 
-def conv_transpose3d_wiehgt(
+def conv_transpose3d_weight(
     input: Tensor,
     weight_size: Union[Size, Tuple[int, ...]],
     grad_output: Tensor,
@@ -766,39 +769,24 @@ def _load_operation(
     }
 
     conv_operation: Callable[..., Tensor]
+    conv_weight_cudnn_deprecated = utils.is_newer_torch("1.11.0")
+    key = "conv"
     if transposed:
         conv_kwargs.update(output_padding=output_padding)
-        if rank == 1:
-            conv_operation = F.conv_transpose1d
-            weight_operation = conv_transpose1d_weight
-        elif rank == 2:
-            conv_operation = F.conv_transpose2d
-            if utils.is_cuda(device):
-                weight_operation = conv_transpose_weight_cudnn
-            else:
-                weight_operation = conv_transpose2d_weight
-        elif rank == 3:
-            conv_operation = F.conv_transpose3d
-            if utils.is_cuda(device):
-                weight_operation = conv_transpose_weight_cudnn
-            else:
-                weight_operation = conv_transpose3d_wiehgt
+        key += "_transpose"
+
+    conv_op_name = f"{key}{rank}d"
+    if utils.is_cuda(device) and not conv_weight_cudnn_deprecated and rank > 1:
+        weight_op_name = f"{key}_weight_cudnn"
+        weight_op_module = sys.modules[__name__]
+    elif transposed:
+        weight_op_name = conv_op_name + "_weight"
+        weight_op_module = sys.modules[__name__]
     else:
-        if rank == 1:
-            conv_operation = F.conv1d
-            weight_operation = grad.conv1d_weight
-        elif rank == 2:
-            conv_operation = F.conv2d
-            if utils.is_cuda(device):
-                weight_operation = conv_weight_cudnn
-            else:
-                weight_operation = grad.conv2d_weight
-        elif rank == 3:
-            conv_operation = F.conv3d
-            if utils.is_cuda(device):
-                weight_operation = conv_weight_cudnn
-            else:
-                weight_operation = grad.conv3d_weight
+        weight_op_name = conv_op_name + "_weight"
+        weight_op_module = grad
+    conv_operation = getattr(F, conv_op_name)
+    weight_operation = getattr(weight_op_module, weight_op_name)
 
     class GFixConvNd(torch.autograd.Function):
         @staticmethod
