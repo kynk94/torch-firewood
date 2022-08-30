@@ -163,7 +163,7 @@ class _UpFirDnNd(nn.Module):
         if not self.ignore_same_padding:
             same_padding = _calc_padding(
                 rank=rank,
-                kernel_size=self.kernel.shape,
+                kernel_size=cast(INT, self.kernel.shape),
                 up=self.up,
                 down=self.down,
             )
