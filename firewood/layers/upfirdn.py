@@ -9,6 +9,7 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
+from torch._C import Graph, Value
 from torch.nn.modules.utils import _reverse_repeat_tuple
 from torch.nn.parameter import Parameter
 
@@ -343,7 +344,7 @@ def firNd(
     C = input.size(1)
     if gain != 1.0:
         kernel = kernel * gain ** (kernel.ndim / rank)
-    kernel = kernel.view(1, 1, *kernel.shape).repeat(C, 1, *(1,) * kernel.ndim)
+    kernel = kernel.view(1, 1, *kernel.shape).expand(C, 1, *kernel.shape)
 
     if kernel.ndim == input.ndim:
         return conv(input, kernel, groups=C)
@@ -464,6 +465,10 @@ def load_cuda_upfirdn2d(
                     gain=math.sqrt(gain),
                 )
             return output
+
+        @staticmethod
+        def symbolic(g: Graph, input: Value, kernel: Value) -> None:
+            raise NotImplementedError("Use default version, not CUDA.")
 
         @staticmethod
         # type: ignore[override]

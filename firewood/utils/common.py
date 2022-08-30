@@ -17,6 +17,7 @@ from typing import (
 
 from packaging.version import Version
 from pkg_resources import get_distribution
+from torch import Tensor
 
 from firewood.common.types import INT, STR
 
@@ -98,7 +99,13 @@ def search_attr(obj: Any, keys: Union[str, Iterable[str]]) -> Any:
     return attr
 
 
-def normalize_int_tuple(value: INT, n: int) -> Tuple[int, ...]:
+def normalize_int_tuple(value: Union[INT, Tensor], n: int) -> Tuple[int, ...]:
+    if isinstance(value, Tensor):
+        numel = value.numel()
+        if numel != 1:
+            raise ValueError(f"Expected a tensor with 1 element, got {numel}")
+        value = cast(int, value.item())
+
     if isinstance(value, int):
         return (value,) * n
 
