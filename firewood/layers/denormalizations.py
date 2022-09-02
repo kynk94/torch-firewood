@@ -21,7 +21,7 @@ class DeNorm(nn.Module):
         if normalization is None:
             raise ValueError("normalization must be specified.")
         self.eps = eps
-        self.normalization: nn.Module = normalizations.get(  # type: ignore
+        self.normalization = normalizations.get(
             normalization=normalization,
             num_features=num_features,
             eps=self.eps,
@@ -33,9 +33,10 @@ class DeNorm(nn.Module):
     ) -> Tensor:
         output = self.normalization(input)
         output = output * scale + offset
+        # TODO: support jit condition
         if alpha == 1.0:
             return output
-        return alpha * output + (1 - alpha) * input
+        return alpha * output + (1.0 - alpha) * input
 
 
 class AdaptiveNorm(DeNorm):
@@ -119,6 +120,7 @@ class AdaptiveNorm(DeNorm):
             gamma = gamma + 1.0
         else:
             assert input.ndim == modulation_input.ndim
+            # TODO: support jit condition
             assert all(i != 1 for i in modulation_input.shape[2:])
             var, beta = torch.var_mean(
                 modulation_input,
