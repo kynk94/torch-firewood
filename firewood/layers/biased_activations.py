@@ -1,6 +1,5 @@
 import functools
-import warnings
-from typing import Any, Callable, Dict, Optional, Tuple, Type, TypedDict
+from typing import Any, Callable, Dict, Optional, Tuple, TypedDict
 
 import numpy as np
 import torch
@@ -9,56 +8,10 @@ import torch.nn.functional as F
 from torch import Tensor
 
 from firewood import utils
-from firewood.common.backend import runtime_build
 from firewood.common.constant import NULL_TENSOR
 from firewood.common.types import DEVICE
 from firewood.layers import activations
-
-_CUDA_OPERATION_CACHE: Dict[
-    Tuple[str, float, float, float, int], Type[torch.autograd.Function]
-] = dict()
-_PRE_BUILD_CUDA_BIASACT_EXTENSION = None
-_RUNTIME_BUILD_CUDA_BIASACT_EXTENSION = None
-
-
-def _load_runtime_cuda_extension() -> Optional[Callable[..., Tensor]]:
-    global _CUDA_OPERATION_CACHE
-    global _PRE_BUILD_CUDA_BIASACT_EXTENSION
-    global _RUNTIME_BUILD_CUDA_BIASACT_EXTENSION
-    if _RUNTIME_BUILD_CUDA_BIASACT_EXTENSION is None:
-        _PRE_BUILD_CUDA_BIASACT_EXTENSION = None
-        _CUDA_OPERATION_CACHE.clear()
-        try:
-            _C = utils.extensions.load_cuda_extension()
-            _RUNTIME_BUILD_CUDA_BIASACT_EXTENSION = _C.bias_act
-        except RuntimeError:
-            warnings.warn("CUDA extension not found. Load default operation.")
-    return _RUNTIME_BUILD_CUDA_BIASACT_EXTENSION
-
-
-def _load_cuda_extension() -> Optional[Callable[..., Tensor]]:
-    global _CUDA_OPERATION_CACHE
-    global _PRE_BUILD_CUDA_BIASACT_EXTENSION
-    global _RUNTIME_BUILD_CUDA_BIASACT_EXTENSION
-
-    if _RUNTIME_BUILD_CUDA_BIASACT_EXTENSION is not None:
-        return _RUNTIME_BUILD_CUDA_BIASACT_EXTENSION
-
-    if runtime_build():
-        return _load_runtime_cuda_extension()
-    if _PRE_BUILD_CUDA_BIASACT_EXTENSION is None:
-        _RUNTIME_BUILD_CUDA_BIASACT_EXTENSION = None
-        _CUDA_OPERATION_CACHE.clear()
-        try:
-            from firewood._C import bias_act
-
-            _PRE_BUILD_CUDA_BIASACT_EXTENSION = bias_act
-        except (RuntimeError, ModuleNotFoundError):
-            warnings.warn(
-                "Pre-build CUDA extension not found. Load default operation."
-            )
-            return _load_runtime_cuda_extension()
-    return _PRE_BUILD_CUDA_BIASACT_EXTENSION
+from firewood.utils.extensions import CUDAExtension
 
 
 def _linear(x: Tensor, *args: Any, **kwargs: Any) -> Tensor:
@@ -307,6 +260,7 @@ def load_cuda_biased_activation(
     clamp: float = -1.0,
     bias_add_dim: int = 1,
 ) -> Callable[..., Tensor]:
+    name = "bias_act"
     cache_key = (
         activation,
         alpha,
@@ -314,21 +268,15 @@ def load_cuda_biased_activation(
         clamp,
         bias_add_dim,
     )
-    if cache_key in _CUDA_OPERATION_CACHE:
-        return _CUDA_OPERATION_CACHE[cache_key].apply
+    cache = CUDAExtension.cache(name)
+    if cache_key in cache:
+        return cache[cache_key].apply
 
-    cuda_extension = _load_cuda_extension()
-    if cuda_extension is None:
-        raise RuntimeError(
-            "CUDA extension could not be loaded. "
-            "Make sure that the CUDA extension is installed and that "
-            "the CUDA_HOME environment variable is set."
-        )
+    cuda_extension = CUDAExtension.get(name)
 
-    CUDA_ACTIVATION = ACTIVATIONS[activation]
-    cuda_operation_index = CUDA_ACTIVATION["cuda_operation_index"]
-    gradient_reference = CUDA_ACTIVATION["gradient_reference"]
-    has_second_grad = CUDA_ACTIVATION["has_second_grad"]
+    cuda_operation_index = ACTIVATIONS[activation]["cuda_operation_index"]
+    gradient_reference = ACTIVATIONS[activation]["gradient_reference"]
+    has_second_grad = ACTIVATIONS[activation]["has_second_grad"]
 
     is_skip = activation == "linear" and gain == 1.0 and clamp < 0
 
@@ -352,7 +300,7 @@ def load_cuda_biased_activation(
             if is_skip and bias is NULL_TENSOR:
                 output = input
             else:
-                output = cuda_extension(  # type: ignore
+                output = cuda_extension(
                     x=input,
                     b=bias,
                     xref=NULL_TENSOR,
@@ -425,7 +373,7 @@ def load_cuda_biased_activation(
             else:
                 ctx.memory_format = torch.contiguous_format
 
-            input_gradient = cuda_extension(  # type: ignore
+            input_gradient = cuda_extension(
                 x=output_gradient,
                 b=bias,
                 xref=input,
@@ -470,7 +418,7 @@ def load_cuda_biased_activation(
                 if not (ctx.needs_input_grad[1] or ctx.needs_input_grad[2]):
                     input_gradient = None
                 else:
-                    input_gradient = cuda_extension(  # type: ignore
+                    input_gradient = cuda_extension(
                         x=input_second_gradient,
                         b=bias,
                         xref=input,
@@ -502,5 +450,5 @@ def load_cuda_biased_activation(
                 None,
             )
 
-    _CUDA_OPERATION_CACHE[cache_key] = BiasedActivationCUDA
+    cache[cache_key] = BiasedActivationCUDA
     return BiasedActivationCUDA.apply

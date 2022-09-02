@@ -774,7 +774,6 @@ def _load_operation(
     if transposed:
         conv_kwargs.update(output_padding=output_padding)
         key += "_transpose"
-
     conv_op_name = f"{key}{rank}d"
     if utils.is_cuda(device) and not conv_weight_cudnn_deprecated and rank > 1:
         weight_op_name = f"{key}_weight_cudnn"

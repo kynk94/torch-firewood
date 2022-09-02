@@ -1,16 +1,21 @@
 import glob
+import hashlib
 import importlib
 import os
 import platform
+import warnings
+from collections import defaultdict
 from types import ModuleType
-from typing import Any, Dict, List, Union
+from typing import Any, Callable, Dict, List, Optional, Union
 
 from torch.utils import cpp_extension
 
-PLATFORM: str = platform.system()
-_PROJECT_ROOT = os.path.dirname(os.path.dirname(__file__))
-_CUDA_SOURCES = glob.glob(
-    os.path.join(_PROJECT_ROOT, "csrc", "**", "*.c*"), recursive=True
+from firewood.common.backend import runtime_build
+from firewood.common.types import STR
+
+_PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+_CUDA_SOURCES = sorted(
+    glob.glob(os.path.join(_PROJECT_ROOT, "csrc", "**", "*.c*"), recursive=True)
 )
 _CACHED_EXTENSIONS: Dict[str, ModuleType] = dict()
 
@@ -27,16 +32,24 @@ def _find_windows_compiler() -> Union[str, None]:
     return None
 
 
-def load_cuda_extension(
-    extension: str = "_C",
-    sources: List[str] = _CUDA_SOURCES,
+def load_extension(
+    sources: STR = _CUDA_SOURCES,
     extra_cuda_cflags: List[str] = ["--use_fast_math"],
     **kwargs: Any,
 ) -> ModuleType:
-    if extension in _CACHED_EXTENSIONS:
-        return _CACHED_EXTENSIONS[extension]
+    if isinstance(sources, str):
+        sources = [sources]
+    sources = sorted(os.path.abspath(source) for source in set(sources))
+    encoded_sources = ",".join(sources).encode("utf-8")
+    extension_hash = hashlib.sha256(encoded_sources).hexdigest()
+    if sources == _CUDA_SOURCES:
+        name = "_C"
+    else:
+        name = f"extension_{extension_hash}"
+    if name in _CACHED_EXTENSIONS:
+        return _CACHED_EXTENSIONS[name]
 
-    if PLATFORM == "Windows" and not is_success(
+    if platform.system() == "Windows" and not is_success(
         os.system("where cl.exe >nul 2>nul")
     ):
         found_compiler = _find_windows_compiler()
@@ -48,20 +61,95 @@ def load_cuda_extension(
         os.environ["PATH"] = found_compiler + ";" + os.environ["PATH"]
 
     module = cpp_extension.load(
-        name=extension,
+        name=name,
         sources=sources,
         is_python_module=True,
         extra_cuda_cflags=extra_cuda_cflags,
         **kwargs,
     )
     try:
-        module = importlib.import_module(extension)
+        module = importlib.import_module(name)
     except Exception:
-        print(f"Successfully compiled, but failed to import {extension}")
+        raise RuntimeError(
+            f"Successfully compiled, but failed to import extension."
+        )
 
-    _CACHED_EXTENSIONS[extension] = module
+    _CACHED_EXTENSIONS[extension_hash] = module
     return module
 
 
 def is_success(status: int) -> bool:
     return status == 0
+
+
+class CUDAExtension:
+    __C = None
+    __use_prebuild = True
+    __cache: Dict[str, Dict[Any, Any]] = defaultdict(dict)
+    cuda_cflags = ["--use_fast_math"]
+
+    @classmethod
+    def available_operations(cls) -> List[str]:
+        if cls.__C is None:
+            cls.__import_prebuild()
+        return [o for o in dir(cls.__C) if not o.startswith("__")]
+
+    @classmethod
+    def cache(cls, name: Optional[str] = None) -> Dict[Any, Any]:
+        cls.__set_prebuild(not runtime_build())
+        if name is None:
+            return cls.__cache
+        return cls.__cache[name]
+
+    @classmethod
+    def get(cls, name: str) -> Callable[..., Any]:
+        if runtime_build():
+            cls.__import_runtime_build()
+        else:
+            cls.__import_prebuild()
+        operation = getattr(cls.__C, name, None)
+        if operation is None:
+            support_operations = ", ".join(cls.available_operations())
+            raise AttributeError(
+                f"{name} is not found in CUDA extension. "
+                f"Available operations: {support_operations}"
+            )
+        return operation
+
+    @classmethod
+    def __clear_cache(cls) -> None:
+        for value in cls.__cache.values():
+            value.clear()
+        print("CUDA extension cache is cleared.")
+
+    @classmethod
+    def __set_prebuild(cls, use_prebuild: bool) -> None:
+        if cls.__use_prebuild != use_prebuild:
+            cls.__clear_cache()
+        cls.__use_prebuild = use_prebuild
+
+    @classmethod
+    def __import_runtime_build(
+        cls, cuda_cflags: Optional[List[str]] = None
+    ) -> ModuleType:
+        cls.__C = load_extension(
+            sources=_CUDA_SOURCES,
+            extra_cuda_cflags=cuda_cflags or cls.cuda_cflags,
+        )
+        cls.__set_prebuild(False)
+        return cls.__C
+
+    @classmethod
+    def __import_prebuild(cls) -> ModuleType:
+        try:
+            import firewood._C
+
+            cls.__C = firewood._C
+            cls.__set_prebuild(True)
+        except (RuntimeError, ModuleNotFoundError):
+            warnings.warn(
+                "Pre-build CUDA extension not found. "
+                "Build CUDA extension now."
+            )
+            return cls.__import_runtime_build()
+        return cls.__C

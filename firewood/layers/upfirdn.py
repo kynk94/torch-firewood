@@ -1,8 +1,7 @@
 import functools
 import math
 import sys
-import warnings
-from typing import Any, Callable, Dict, Optional, Tuple, Type, Union, cast
+from typing import Any, Callable, Dict, Optional, Tuple, Union, cast
 
 import numpy as np
 import torch
@@ -11,66 +10,12 @@ import torch.nn.functional as F
 from torch import Tensor
 from torch._C import Graph, Value
 from torch.nn.modules.utils import _reverse_repeat_tuple
-from torch.nn.parameter import Parameter
 
 from firewood import utils
-from firewood.common.backend import runtime_build
 from firewood.common.constant import NULL_TENSOR
 from firewood.common.types import DEVICE, FLOAT, INT
+from firewood.utils.extensions import CUDAExtension
 from firewood.utils.image import nearest_downsample, upsample
-
-_CUDA_OPERATION_CACHE: Dict[
-    Tuple[
-        Tuple[int, ...],  # up
-        Tuple[int, ...],  # down
-        Tuple[int, ...],  # padding
-        bool,  # flip_kernel
-        float,  # gain
-    ],
-    Type[torch.autograd.Function],
-] = dict()
-_PRE_BUILD_CUDA_UPFIRDN_EXTENSION = None
-_RUNTIME_BUILD_CUDA_UPFIRDN_EXTENSION = None
-
-
-def _load_runtime_cuda_extension() -> Optional[Callable[..., Tensor]]:
-    global _CUDA_OPERATION_CACHE
-    global _PRE_BUILD_CUDA_UPFIRDN_EXTENSION
-    global _RUNTIME_BUILD_CUDA_UPFIRDN_EXTENSION
-    if _RUNTIME_BUILD_CUDA_UPFIRDN_EXTENSION is None:
-        _PRE_BUILD_CUDA_UPFIRDN_EXTENSION = None
-        _CUDA_OPERATION_CACHE.clear()
-        try:
-            _C = utils.extensions.load_cuda_extension()
-            _RUNTIME_BUILD_CUDA_UPFIRDN_EXTENSION = _C.upfirdn2d
-        except RuntimeError:
-            warnings.warn("CUDA extension not found. Load default operation.")
-    return _RUNTIME_BUILD_CUDA_UPFIRDN_EXTENSION
-
-
-def _load_cuda_extension() -> Optional[Callable[..., Tensor]]:
-    global _CUDA_OPERATION_CACHE
-    global _PRE_BUILD_CUDA_UPFIRDN_EXTENSION
-    global _RUNTIME_BUILD_CUDA_UPFIRDN_EXTENSION
-
-    if _RUNTIME_BUILD_CUDA_UPFIRDN_EXTENSION is not None:
-        return _RUNTIME_BUILD_CUDA_UPFIRDN_EXTENSION
-
-    if runtime_build():
-        return _load_runtime_cuda_extension()
-    if _PRE_BUILD_CUDA_UPFIRDN_EXTENSION is None:
-        _RUNTIME_BUILD_CUDA_UPFIRDN_EXTENSION = None
-        _CUDA_OPERATION_CACHE.clear()
-        try:
-            from firewood._C import upfirdn2d
-
-            _PRE_BUILD_CUDA_UPFIRDN_EXTENSION = upfirdn2d
-        except (RuntimeError, ModuleNotFoundError):
-            warnings.warn(
-                "Pre-build CUDA extension not found. Load default operation."
-            )
-            return _load_runtime_cuda_extension()
-    return _PRE_BUILD_CUDA_UPFIRDN_EXTENSION
 
 
 def get_upfirdn_layer(
@@ -90,9 +35,9 @@ def get_upfirdn_layer(
     firdown: Optional[_UpFirDnNd] = None
     up = utils.normalize_int_tuple(up, rank)
     down = utils.normalize_int_tuple(down, rank)
-    __class__: _UpFirDnNd = getattr(sys.modules[__name__], f"UpFirDn{rank}d")
+    module: _UpFirDnNd = getattr(sys.modules[__name__], f"UpFirDn{rank}d")
     if any(u > 1 for u in up):
-        upfir = __class__(
+        upfir = module(
             kernel=kernel,
             up=up,
             down=1,
@@ -105,7 +50,7 @@ def get_upfirdn_layer(
         )
         padding = 0
     if any(d > 1 for d in down) or (upfir is None and kernel is not None):
-        firdown = __class__(
+        firdown = module(
             kernel=kernel,
             up=1,
             down=down,
@@ -345,6 +290,8 @@ def firNd(
     if gain != 1.0:
         kernel = kernel * gain ** (kernel.ndim / rank)
     kernel = kernel.view(1, 1, *kernel.shape)
+    # kernel = kernel.expand(C, 1, *kernel.shape[2:]) is best implementation.
+    # But torch.onnx not support expand before convolution.
     kernel = torch.cat([kernel for _ in range(C)], dim=0)
 
     if kernel.ndim == input.ndim:
@@ -365,12 +312,9 @@ def upfirdnNd(
     padding: INT = 0,
     upsample_mode: str = "zeros",
 ) -> Tensor:
-    if isinstance(up, int):
-        up = (up,) * (input.ndim - 2)
-    if isinstance(down, int):
-        down = (down,) * (input.ndim - 2)
-    if isinstance(padding, int):
-        padding = (padding,) * (input.ndim - 2)
+    up = utils.normalize_int_tuple(up, input.ndim - 2)
+    down = utils.normalize_int_tuple(down, input.ndim - 2)
+    padding = _parse_padding(input.ndim - 2, padding)
 
     # upsample
     if any(u > 1 for u in up) and all(u >= 1 for u in up):
@@ -398,17 +342,13 @@ def load_cuda_upfirdn2d(
     flip_kernel: bool,
     gain: float = 1.0,
 ) -> Callable[..., Tensor]:
+    name = "upfirdn2d"
     cache_key = (up, down, padding, flip_kernel, gain)
-    if cache_key in _CUDA_OPERATION_CACHE:
-        return _CUDA_OPERATION_CACHE[cache_key].apply
+    cache = CUDAExtension.cache(name)
+    if cache_key in cache:
+        return cache[cache_key].apply
 
-    cuda_extension = _load_cuda_extension()
-    if cuda_extension is None:
-        raise RuntimeError(
-            "CUDA extension could not be loaded. "
-            "Make sure that the CUDA extension is installed and that "
-            "the CUDA_HOME environment variable is set."
-        )
+    cuda_extension = CUDAExtension.get(name)
 
     gain *= math.prod(up)
 
@@ -422,7 +362,7 @@ def load_cuda_upfirdn2d(
             ctx.input_shape = input.shape
 
             if kernel.ndim == 2:
-                output = cuda_extension(  # type: ignore
+                output = cuda_extension(
                     x=output,
                     f=kernel,
                     upx=up[0],
@@ -437,7 +377,7 @@ def load_cuda_upfirdn2d(
                     gain=gain,
                 )
             else:
-                output = cuda_extension(  # type: ignore
+                output = cuda_extension(
                     x=output,
                     f=kernel.unsqueeze(0),
                     upx=up[0],
@@ -451,7 +391,7 @@ def load_cuda_upfirdn2d(
                     flip=flip_kernel,
                     gain=math.sqrt(gain),
                 )
-                output = cuda_extension(  # type: ignore
+                output = cuda_extension(
                     x=output,
                     f=kernel.unsqueeze(1),
                     upx=1,
@@ -499,7 +439,7 @@ def load_cuda_upfirdn2d(
                 )(grad_output, kernel)
             return grad_input, grad_kernel
 
-    _CUDA_OPERATION_CACHE[cache_key] = UpFirDn2dCUDA
+    cache[cache_key] = UpFirDn2dCUDA
     return UpFirDn2dCUDA.apply
 
 
