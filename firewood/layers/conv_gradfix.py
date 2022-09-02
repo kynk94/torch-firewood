@@ -979,7 +979,7 @@ def _symbolic_convolution(
     args = [input, weight]
     if (
         bias is not None
-        and sym_help._is_none(bias)
+        and not sym_help._is_none(bias)
         and sym_help._get_tensor_rank(bias) == 1
     ):
         args.append(bias)
