@@ -1,5 +1,5 @@
 import math
-from collections import OrderedDict
+import re
 from typing import List, Optional, Tuple, TypedDict, Union
 
 import torch
@@ -50,38 +50,43 @@ class BiasLREqualizer:
                     reapply=reapply,
                 )
             return None
-        module_name = utils.get_name(module)
-        if module_name not in _NEED_RECURSIVE and module_name.endswith("Norm"):
-            return None
         if hasattr(module, "lr_equalization"):
             setattr(module, "lr_equalization", True)
-        if getattr(module, name, None) is None:
+        module_name = utils.get_name(module)
+        if module_name not in _NEED_RECURSIVE and re.search(
+            r"Norm(\dd)?$", module_name
+        ):
+            return None
+        _bias = getattr(module, name, None)
+        if _bias is None or not isinstance(_bias, Tensor):
             return None
         if init is None:
             init = 0.0
         if has_bias_lr_equalizer(module):
-            if not reapply or getattr(module, "bias_init", None) == init:
+            if not reapply or getattr(module, "_bias_init", None) == init:
                 return None
             _remove_bias_lr_equalizer(module, recursive=False)
 
         fn = BiasLREqualizer(name=name)
-        module.register_forward_pre_hook(fn)
-        forward_pre_hooks = list(module._forward_pre_hooks.items())
-        forward_pre_hooks = forward_pre_hooks[-1:] + forward_pre_hooks[:-1]
-        module._forward_pre_hooks = OrderedDict(forward_pre_hooks)
+        utils.register_forward_pre_hook_to_index(module, fn, 0)
 
         # other norm use `name + '_orig'` to save the original bias
         if hasattr(module, name + "_orig"):
             setattr(fn, "target_name", name + "_orig")
 
-        bias: Tensor = utils.popattr(module, fn.target_name).clone()
-        bias = torch.tensor(init, dtype=bias.dtype, device=bias.device).expand(
-            bias.shape
+        original_bias: Tensor = utils.popattr(module, fn.target_name)
+        bias = Parameter(
+            torch.full(
+                size=original_bias.shape,
+                fill_value=init,
+                dtype=original_bias.dtype,
+                device=original_bias.device,
+            )
         )
-        setattr(module, "bias_init", init)
-        setattr(module, "bias_gain", lr_multiplier)
+        module.register_parameter(name + "_param", bias)
         setattr(module, fn.target_name, bias.detach())
-        module.register_parameter(name + "_param", Parameter(bias.clone()))
+        setattr(module, "_bias_gain", lr_multiplier)
+        setattr(module, "_bias_init", init)
         return fn
 
     def remove(self, module: nn.Module) -> None:
@@ -90,8 +95,8 @@ class BiasLREqualizer:
         with torch.no_grad():
             bias = self.compute_bias(module)
         delattr(module, self.name + "_param")
-        delattr(module, "bias_init")
-        delattr(module, "bias_gain")
+        delattr(module, "_bias_gain")
+        delattr(module, "_bias_init")
         if hasattr(module, self.name + "_orig"):
             module.register_parameter(
                 self.target_name, Parameter(bias.detach())
@@ -102,7 +107,7 @@ class BiasLREqualizer:
 
     def compute_bias(self, module: nn.Module) -> Tensor:
         bias: Parameter = getattr(module, self.name + "_param")
-        bias_gain = getattr(module, "bias_gain")
+        bias_gain: float = getattr(module, "_bias_gain")
         if bias_gain != 1.0:
             bias = bias * bias_gain
         return bias
@@ -141,11 +146,13 @@ class WeightLREqualizer:
                     reapply=reapply,
                 )
             return None
-        module_name = utils.get_name(module)
-        if module_name not in _NEED_RECURSIVE and module_name.endswith("Norm"):
-            return None
         if hasattr(module, "lr_equalization"):
             setattr(module, "lr_equalization", True)
+        module_name = utils.get_name(module)
+        if module_name not in _NEED_RECURSIVE and re.search(
+            r"Norm(\dd)?$", module_name
+        ):
+            return None
         _weight: Optional[Tensor] = getattr(module, name, None)
         if _weight is None or _weight.ndim == 1:
             return None
@@ -160,10 +167,7 @@ class WeightLREqualizer:
             _remove_weight_lr_equalizer(module, recursive=False)
 
         fn = WeightLREqualizer(name=name)
-        module.register_forward_pre_hook(fn)
-        forward_pre_hooks = list(module._forward_pre_hooks.items())
-        forward_pre_hooks = forward_pre_hooks[-1:] + forward_pre_hooks[:-1]
-        module._forward_pre_hooks = OrderedDict(forward_pre_hooks)
+        utils.register_forward_pre_hook_to_index(module, fn, 0)
 
         # other weight norm use `name + '_orig'` to save the original weight
         if hasattr(module, name + "_orig"):
