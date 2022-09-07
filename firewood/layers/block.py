@@ -18,7 +18,7 @@ from firewood.layers.upfirdn import get_upfirdn_layer
 
 # If want to use other layers in Block, modify values of SUPPORT_LAYER_NAMES.
 SUPPORT_LAYER_NAMES = {
-    "W": ["up_fir", "weighting", "down_fir", "noise"],
+    "W": ["up_fir", "weight", "down_fir", "noise"],
     "N": ["normalization"],
     "B": ["add_bias"],
     "A": ["activation", "dropout"],
@@ -66,7 +66,7 @@ class Block(nn.Module):
         self.layers = nn.ModuleDict()
 
         # set weight layer
-        self.update_layer_in_order("weighting", weight_layer)
+        self.update_layer_in_order("weight", weight_layer)
 
         # set FIR filter
         up_fir_layer, down_fir_layer = get_upfirdn_layer(
@@ -116,7 +116,7 @@ class Block(nn.Module):
         for _norm in self.weight_normalization:
             norm = weight_normalizations.get(_norm, **weight_normalization_args)
             if norm is not None:
-                norm(self.layers.get_submodule("weighting"))
+                norm(self.layers.get_submodule("weight"))
 
         if lr_equalization is None:
             lr_equalization = backend.lr_equalization()
@@ -206,9 +206,9 @@ class Block(nn.Module):
         self.layers = updated_layers
 
     def __move_bias_to_independent_layer(self) -> None:
-        if "weighting" not in self.layers:
+        if "weight" not in self.layers:
             return
-        weight_layer = self.layers.get_submodule("weighting")
+        weight_layer = self.layers.get_submodule("weight")
         bias_attrs = lr_equalizers.pop_bias_attrs(weight_layer)
         if bias_attrs["bias"] is None:
             return
@@ -224,10 +224,6 @@ class Block(nn.Module):
             activation_layer = self.layers.get_submodule("activation")
             if getattr(activation_layer, "bias", None) is not None:
                 lr_equalizers.pop_bias_attrs(activation_layer)
-                print(
-                    "Duplicated bias is removed which is in activation layer. "
-                    "And keep the bias layer."
-                )
 
         # If affine is True, the normalization layer multiply weight and
         # add bias. So, no need to use bias after normalization.
