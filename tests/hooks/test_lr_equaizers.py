@@ -2,14 +2,14 @@ import torch
 import torch.nn as nn
 import torch.nn.functional as F
 
+from firewood.hooks.lr_equalizers import lr_equalizer, remove_lr_equalizer
 from firewood.layers.conv_blocks import Conv2dBlock
-from firewood.layers.lr_equalizers import lr_equalizer, remove_lr_equalizer
 
 
 def test_assign_remove():
     x = torch.randn(1, 3, 64, 64)
 
-    kwargs = dict(bias=True, normalization="bn", activation="lrelu")
+    kwargs = dict(bias=True, activation="lrelu")
     model = nn.Sequential(
         Conv2dBlock(3, 3, 3, 2, 1, **kwargs),
         Conv2dBlock(3, 3, 3, 2, 1, **kwargs),
@@ -17,20 +17,15 @@ def test_assign_remove():
     lr_equalizer(model, recursive=True)
 
     for layer in model:
-        for _layer in layer.layers["W"]:
-            if hasattr(_layer, "weight_param"):
-                break
-        else:
-            raise ValueError("No weight_param found.")
-        assert hasattr(layer, "bias_param")
+        assert hasattr(layer.layers["weighting"], "weight_param")
+        assert hasattr(layer.layers["activation"], "bias_param")
 
     remove_lr_equalizer(model, recursive=True)
 
     for layer in model:
-        for _layer in layer.layers["W"]:
-            if hasattr(_layer, "weight_param"):
-                raise ValueError("No weight_param found.")
-        assert not hasattr(layer, "bias_param")
+        if hasattr(layer.layers["weighting"], "weight_param"):
+            raise ValueError("No weight_param found.")
+        assert not hasattr(layer.layers["activation"], "bias_param")
 
 
 def test_with_nn():
@@ -46,14 +41,13 @@ def test_with_nn():
     lr_equalizer(model, recursive=True)
 
     class NNBlock(nn.Module):
-        def __init__(self, weight, weight_gain, activation_gain=1.0):
+        def __init__(self, weight, weight_gain):
             super().__init__()
             self.conv = nn.Conv2d(3, 3, 3, 2, 1, bias=False)
             self.conv.weight.data = weight.data
             self.normalization = nn.BatchNorm2d(3)
             self.activation = nn.LeakyReLU(0.2, inplace=True)
-            self.weight_gain = weight_gain.detach().clone()
-            self.activation_gain = activation_gain
+            self.weight_gain = weight_gain
 
         def forward(self, input):
             output = self.conv(input)
@@ -61,17 +55,14 @@ def test_with_nn():
             output = self.normalization(output)
             if self.activation is not None:
                 output = self.activation(output)
-                output = output * self.activation_gain
             return output
 
-    conv_1 = model[0].weight_layer
-    conv_2 = model[1].weight_layer
-    activation_1 = model[0].activation
-    activation_2 = model[1].activation
+    conv_1 = model[0].layers["weighting"]
+    conv_2 = model[1].layers["weighting"]
 
     nn_model = nn.Sequential(
-        NNBlock(conv_1.weight_param, conv_1.weight_gain, activation_1.gain),
-        NNBlock(conv_2.weight_param, conv_2.weight_gain, activation_2.gain),
+        NNBlock(conv_1.weight_param, conv_1._weight_gain),
+        NNBlock(conv_2.weight_param, conv_2._weight_gain),
     )
 
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)

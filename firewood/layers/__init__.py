@@ -8,7 +8,7 @@ from torch.nn.modules.conv import (
 )
 from torch.nn.modules.flatten import Flatten
 
-from . import activations, initializers, normalizations, weight_normalizations
+from . import activations, initializers, normalizations
 from .biased_activations import BiasedActivation
 from .block import Block
 from .clamp import Clamp
