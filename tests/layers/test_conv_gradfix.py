@@ -367,7 +367,7 @@ def test_conv_with_nn_gpu(rank: int, stride: int, padding: int) -> None:
         outputs=[loss_original], inputs=[nn_conv.weight], create_graph=True
     )[0]
 
-    absolute_tolerence = 1e-7 * 10**rank
+    absolute_tolerence = 1e-3 * 10**rank
     assert torch.allclose(
         y_custom, y_original
     ), f"Forward output mismatch. l1: {F.l1_loss(y_custom, y_original)}"
