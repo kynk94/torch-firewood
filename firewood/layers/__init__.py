@@ -53,7 +53,6 @@ from .conv_separable import (
 )
 from .denormalizations import AdaptiveNorm, DeNorm, SpatialAdaptiveNorm
 from .linear import Linear, LinearBlock
-from .lr_equalizers import lr_equalizer, remove_lr_equalizer
 from .minibatch_std import MinibatchStd
 from .noise import GaussianNoise, UniformNoise
 from .normalizations import BatchNorm, GroupNorm, InstanceNorm, PixelNorm
