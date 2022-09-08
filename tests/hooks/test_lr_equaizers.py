@@ -14,13 +14,13 @@ def test_assign_remove():
         Conv2dBlock(3, 3, 3, 2, 1, **kwargs),
         Conv2dBlock(3, 3, 3, 2, 1, **kwargs),
     )
-    lr_equalizer(model, recursive=True)
+    lr_equalizer(model)
 
     for layer in model:
         assert hasattr(layer.layers["weighting"], "weight_param")
         assert hasattr(layer.layers["activation"], "bias_param")
 
-    remove_lr_equalizer(model, recursive=True)
+    remove_lr_equalizer(model)
 
     for layer in model:
         if hasattr(layer.layers["weighting"], "weight_param"):
@@ -38,7 +38,7 @@ def test_with_nn():
         Conv2dBlock(3, 3, 3, 2, 1, **kwargs),
         Conv2dBlock(3, 3, 3, 2, 1, **kwargs),
     )
-    lr_equalizer(model, recursive=True)
+    lr_equalizer(model)
 
     class NNBlock(nn.Module):
         def __init__(self, weight, weight_gain):
