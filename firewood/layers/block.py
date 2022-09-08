@@ -1,4 +1,5 @@
 import re
+import warnings
 from typing import Any, Dict, List, Optional
 
 import torch
@@ -224,6 +225,7 @@ class Block(nn.Module):
             activation_layer = self.layers.get_submodule("activation")
             if getattr(activation_layer, "bias", None) is not None:
                 lr_equalizers.pop_bias_attrs(activation_layer)
+                warnings.warn("Remove meaningless bias from activation layer.")
 
         # If affine is True, the normalization layer multiply weight and
         # add bias. So, no need to use bias after normalization.
@@ -231,7 +233,7 @@ class Block(nn.Module):
             normalization_layer = self.layers.get_submodule("normalization")
             if getattr(normalization_layer, "affine", False):
                 self._update_layer_in_order("add_bias", None)
-                print("Remove meaningless bias after normalization.")
+                warnings.warn("Remove meaningless bias after normalization.")
 
     def __update_activation(self, fuse: bool) -> None:
         if "activation" not in self.layers:
