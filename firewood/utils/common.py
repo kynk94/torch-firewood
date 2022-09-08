@@ -78,6 +78,12 @@ def updated_dict(
     return copy
 
 
+def attr_is_value(obj: Any, attr: str, value: Any) -> bool:
+    if not hasattr(obj, attr):
+        return False
+    return getattr(obj, attr) == value
+
+
 def popattr(obj: Any, attr: str, default: Any = "__default") -> Any:
     if not hasattr(obj, attr):
         if default == "__default":

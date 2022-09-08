@@ -1,10 +1,32 @@
-from typing import Any, Optional, Union
+from typing import Any, Optional, Union, overload
 
 import torch
 import torch.nn as nn
 from torch import Tensor
 from torch.nn.modules.batchnorm import _BatchNorm
 from torch.nn.modules.instancenorm import _InstanceNorm
+
+
+@overload
+def get(
+    normalization: Union[nn.Module, str],
+    num_features: int,
+    eps: float,
+    unbiased: bool,
+    **normalization_kwargs: Any,
+) -> nn.Module:
+    ...
+
+
+@overload
+def get(
+    normalization: None,
+    num_features: int,
+    eps: float,
+    unbiased: bool,
+    **normalization_kwargs: Any,
+) -> None:
+    ...
 
 
 def get(
@@ -97,6 +119,14 @@ class GroupNorm(nn.GroupNorm):
 
 
 class InstanceNorm(_InstanceNorm):
+    """
+    InstanceNorm of implicit input dimension.
+    Does not support no_batch_dim operation.
+
+    `Instance Normalization: The Missing Ingredient for Fast Stylization
+    <https://arxiv.org/abs/1607.08022>`
+    """
+
     def __init__(
         self,
         num_features: int,
@@ -114,10 +144,10 @@ class InstanceNorm(_InstanceNorm):
             track_running_stats=track_running_stats,
         )
         self.unbiased = unbiased
-        self.__fake_no_batch_dim = 4  # rank + 2, default is rank 2
+        self.__fake_no_batch_dim = 3  # rank + 1, default is rank 2
 
     def _check_input_dim(self, input: Tensor) -> None:
-        self.__fake_no_batch_dim = input.dim() + 1
+        self.__fake_no_batch_dim = input.dim() - 1
         return
 
     def _get_no_batch_dim(self) -> int:

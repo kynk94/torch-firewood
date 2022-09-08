@@ -1,4 +1,5 @@
 import itertools
+import re
 
 import pytest
 import torch
@@ -49,9 +50,7 @@ def test_op_order_with_nn(op_order):
 def test_normalize_op_order():
     op_orders = tuple("".join(i) for i in itertools.permutations("WNA", 3))
     for op_order in op_orders:
-        _op_order = op_order
-        if "WN" not in op_order:
-            _op_order = op_order.replace("W", "WB")
+        _op_order = re.sub("(WN?)", r"\1B", op_order)
         assert normalize_op_order(op_order) == _op_order
     with expect_raise(ValueError):
         normalize_op_order("")

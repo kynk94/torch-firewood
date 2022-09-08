@@ -1,6 +1,7 @@
 [run]
 source =
     firewood/common
+    firewood/hooks
     firewood/layers
     firewood/models
     firewood/trainer/callbacks

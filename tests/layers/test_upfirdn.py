@@ -23,7 +23,7 @@ from tests.stylegan3.torch_utils.ops.upfirdn2d import (
 def test_filter2d_cpu(padding: int) -> None:
     lr = 1e-2
     kernel = [random.randint(1, 5) for _ in range(4)]
-    embedding_size = random.choice(tuple(power_of_2(6)))
+    embedding_size = random.choice(tuple(power_of_2(6))[1:])
     custom_operation = UpFirDn2d(kernel, padding=padding)
 
     x_custom = torch.randn(

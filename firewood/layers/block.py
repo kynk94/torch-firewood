@@ -1,4 +1,5 @@
 import re
+import warnings
 from typing import Any, Dict, List, Optional
 
 import torch
@@ -8,18 +9,19 @@ from torch import Tensor
 from firewood import utils
 from firewood.common import backend
 from firewood.common.types import STR
-from firewood.layers import activations, lr_equalizers
+from firewood.hooks import lr_equalizers, weight_normalizations
+from firewood.layers import activations
 from firewood.layers import noise as _noise
-from firewood.layers import normalizations, weight_normalizations
+from firewood.layers import normalizations
 from firewood.layers.bias import Bias
 from firewood.layers.biased_activations import ACTIVATIONS, BiasedActivation
 from firewood.layers.upfirdn import get_upfirdn_layer
 
 # If want to use other layers in Block, modify values of SUPPORT_LAYER_NAMES.
 SUPPORT_LAYER_NAMES = {
-    "W": ["up_fir", "weight", "down_fir", "noise"],
+    "W": ["up_fir", "weighting", "down_fir", "noise"],
     "N": ["normalization"],
-    "B": ["bias"],
+    "B": ["add_bias"],
     "A": ["activation", "dropout"],
 }
 
@@ -31,6 +33,8 @@ class Block(nn.Module):
     Basic order of layers:
         (weight -> fir -> noise) -> normalization -> (bias -> activation)
         Each layers is optional, except weight layer.
+        And if affine of normalization's attribute is True, bias layer will be
+        deleted because it is included in normalization layer.
     """
 
     # private properties
@@ -63,7 +67,7 @@ class Block(nn.Module):
         self.layers = nn.ModuleDict()
 
         # set weight layer
-        self.update_layer_in_order("weight", weight_layer)
+        self.update_layer_in_order("weighting", weight_layer)
 
         # set FIR filter
         up_fir_layer, down_fir_layer = get_upfirdn_layer(
@@ -113,7 +117,7 @@ class Block(nn.Module):
         for _norm in self.weight_normalization:
             norm = weight_normalizations.get(_norm, **weight_normalization_args)
             if norm is not None:
-                norm(self.layers.get_submodule("weight"))
+                norm(self.layers.get_submodule("weighting"))
 
         if lr_equalization is None:
             lr_equalization = backend.lr_equalization()
@@ -140,30 +144,10 @@ class Block(nn.Module):
 
     @lr_equalization.setter
     def lr_equalization(self, value: bool) -> None:
+        if self.__lr_equalization == value:
+            return
         self.__lr_equalization = value
         self._check_layers()
-
-        weight_layer = self.layers.get_submodule("weight")
-        activation_layer = getattr(self.layers, "activation", None)
-        bias_layer = getattr(self.layers, "bias", None)
-        if value:
-            lr_equalizers.lr_equalizer(
-                weight_layer, **self.lr_equalization_args
-            )
-            if bias_layer:
-                lr_equalizers.lr_equalizer(
-                    bias_layer, **self.lr_equalization_args
-                )
-            elif isinstance(activation_layer, BiasedActivation):
-                lr_equalizers.lr_equalizer(
-                    activation_layer, **self.lr_equalization_args
-                )
-        else:
-            lr_equalizers.remove_lr_equalizer(weight_layer)
-            if bias_layer:
-                lr_equalizers.remove_lr_equalizer(bias_layer)
-            elif isinstance(activation_layer, BiasedActivation):
-                lr_equalizers.remove_lr_equalizer(activation_layer)
 
     @property
     def op_order(self) -> str:
@@ -223,32 +207,33 @@ class Block(nn.Module):
         self.layers = updated_layers
 
     def __move_bias_to_independent_layer(self) -> None:
-        if "weight" not in self.layers:
+        if "weighting" not in self.layers:
             return
-        weight_layer = self.layers.get_submodule("weight")
+        weight_layer = self.layers.get_submodule("weighting")
         bias_attrs = lr_equalizers.pop_bias_attrs(weight_layer)
         if bias_attrs["bias"] is None:
             return
         bias_layer = Bias()
         lr_equalizers.set_bias_attrs(bias_layer, **bias_attrs)
-        self._update_layer_in_order("bias", bias_layer)
+        self._update_layer_in_order("add_bias", bias_layer)
 
     def __remove_meaningless_bias(self) -> None:
-        if "bias" not in self.layers:
+        if "add_bias" not in self.layers:
             return
 
         if "activation" in self.layers:
             activation_layer = self.layers.get_submodule("activation")
             if getattr(activation_layer, "bias", None) is not None:
                 lr_equalizers.pop_bias_attrs(activation_layer)
+                warnings.warn("Remove meaningless bias from activation layer.")
 
         # If affine is True, the normalization layer multiply weight and
         # add bias. So, no need to use bias after normalization.
         if "normalization" in self.layers and self.op_order == "WNA":
             normalization_layer = self.layers.get_submodule("normalization")
             if getattr(normalization_layer, "affine", False):
-                self._update_layer_in_order("bias", None)
-                return
+                self._update_layer_in_order("add_bias", None)
+                warnings.warn("Remove meaningless bias after normalization.")
 
     def __update_activation(self, fuse: bool) -> None:
         if "activation" not in self.layers:
@@ -284,14 +269,16 @@ class Block(nn.Module):
         def __fuse_biased_activation() -> None:
             if "activation" not in self.layers:
                 return
-            if "bias" not in self.layers:
+            if "add_bias" not in self.layers:
+                return
+            if "BA" not in self.__op_order:
                 return
             self.__update_activation(fuse=True)
             activation_layer = self.layers.get_submodule("activation")
-            bias_layer = self.layers.get_submodule("bias")
+            bias_layer = self.layers.get_submodule("add_bias")
             if isinstance(activation_layer, BiasedActivation):
                 lr_equalizers.transfer_bias_attrs(bias_layer, activation_layer)
-                self._update_layer_in_order("bias", None)
+                self._update_layer_in_order("add_bias", None)
 
         __fuse_biased_activation()
 
@@ -314,7 +301,7 @@ class Block(nn.Module):
             ):
                 bias_layer = Bias()
                 lr_equalizers.transfer_bias_attrs(activation_layer, bias_layer)
-                self._update_layer_in_order("bias", bias_layer)
+                self._update_layer_in_order("add_bias", bias_layer)
             self.__update_activation(fuse=False)
 
         __unravel_biased_activation()
@@ -323,16 +310,22 @@ class Block(nn.Module):
         """
         Determine whether bias_layer is required.
         """
-        if "bias" not in self.layers:
+        if "add_bias" not in self.layers:
             return
-        index = SUPPORT_LAYER_NAMES["W"].index("weight")
-        for layer in SUPPORT_LAYER_NAMES["W"][index + 1 :]:
+        op_before_bias = self.__op_order[
+            self.__op_order.index("W") : self.__op_order.index("B")
+        ]
+        layers: List[str] = sum(
+            (SUPPORT_LAYER_NAMES[op] for op in op_before_bias), []
+        )
+        index = layers.index("weighting")
+        for layer in layers[index + 1 :]:
             if layer in self.layers:
                 return
-        weight_layer = self.layers.get_submodule("weight")
-        bias_layer = self.layers.get_submodule("bias")
+        weight_layer = self.layers.get_submodule("weighting")
+        bias_layer = self.layers.get_submodule("add_bias")
         lr_equalizers.transfer_bias_attrs(bias_layer, weight_layer)
-        self._update_layer_in_order("bias", None)
+        self._update_layer_in_order("add_bias", None)
 
     def extra_repr(self) -> str:
         return ", ".join(
@@ -358,6 +351,4 @@ def normalize_op_order(op_order: str) -> str:
             raise ValueError(
                 f"Op order must contain exactly one {char} character."
             )
-    if "WN" not in op_order:
-        op_order = op_order.replace("W", "WB")
-    return op_order
+    return re.sub("(WN?)", r"\1B", op_order)

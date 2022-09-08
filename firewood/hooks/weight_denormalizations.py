@@ -1,64 +1,21 @@
-import functools
 import math
-from typing import Any, Callable, Optional, Tuple, Union
+from typing import Any, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
 from torch import Tensor
 from torch import linalg as LA
 from torch.nn import Parameter
-from torch.nn.utils import spectral_norm, weight_norm
 
 from firewood import utils
 from firewood.layers.linear import Linear
-
-
-def get(
-    normalization: str,
-    n_power_iterations: int = 1,
-    modulation_features: Optional[int] = None,
-    demodulate: bool = True,
-    pre_normalize: bool = False,
-    eps: float = 1e-9,
-    **kwargs: Any,
-) -> Optional[Callable[..., nn.Module]]:
-    if normalization is None:
-        return None
-    normalization = normalization.lower()
-    if normalization.startswith("spectral"):
-        return functools.partial(
-            spectral_norm,
-            n_power_iterations=n_power_iterations,
-            eps=eps,
-            **kwargs,
-        )
-    if normalization in {"weight", "weight_norm", "weight_normalization"}:
-        return functools.partial(weight_norm, **kwargs)
-    if normalization in {
-        "demodulation",
-        "weight_demodulation",
-        "denorm",
-        "weight_denorm",
-        "weight_denormalization",
-    }:
-        if modulation_features is None:
-            raise ValueError("modulation_features must be specified.")
-        return functools.partial(
-            weight_denorm,
-            modulation_features=modulation_features,
-            demodulate=demodulate,
-            pre_normalize=pre_normalize,
-            eps=eps,
-            **kwargs,
-        )
-    raise ValueError(f"Unknown weight normalization: {normalization}")
 
 
 class WeightDeNormOutput:
     def __init__(self, out_features: int, name: str = "bias") -> None:
         self.out_features = out_features
         self.name = name
-        self.demodulation_coef: Tensor = None  # type: ignore
+        self.demodulation_coef: Optional[Tensor] = None
 
         self.target_name = self.name
 
@@ -101,6 +58,16 @@ class WeightDeNormOutput:
 
 
 class WeightDeNorm:
+    """
+    Weight demodulation operation introduced in StyleGAN2.
+
+    Operate as forward-pre and forward hook.
+    hook sequence:
+        (LREqualizer) -> WeightDeNorm -> module's forward -> WeightDeNormOutput
+    """
+
+    output_hook: WeightDeNormOutput
+
     def __init__(
         self,
         name: str = "weight",
@@ -114,7 +81,6 @@ class WeightDeNorm:
         self.eps = eps
 
         self.target_name = self.name
-        self.output_hook: WeightDeNormOutput = None  # type: ignore
 
     @staticmethod
     def apply(

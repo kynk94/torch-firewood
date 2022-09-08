@@ -1,3 +1,4 @@
+from collections import OrderedDict
 from typing import Any, Optional, Sequence, Tuple, Union
 
 import torch
@@ -99,6 +100,20 @@ def get_in_out_features(module: nn.Module) -> Tuple[int, int]:
             )
         out_features, in_features = weight.shape[:2]
     return in_features, out_features
+
+
+def register_forward_pre_hook_to_index(
+    module: nn.Module, hook: Any, index: int
+) -> None:
+    module.register_forward_pre_hook(hook)
+    forward_pre_hooks = list(module._forward_pre_hooks.items())
+    current_hook = forward_pre_hooks.pop()
+    forward_pre_hooks = [
+        *forward_pre_hooks[:index],
+        current_hook,
+        *forward_pre_hooks[index:],
+    ]
+    module._forward_pre_hooks = OrderedDict(forward_pre_hooks)
 
 
 def _single_padding(
