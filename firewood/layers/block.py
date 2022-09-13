@@ -58,10 +58,12 @@ class Block(nn.Module):
         lr_equalization: Optional[bool] = None,
         lr_equalization_args: Optional[Dict[str, Any]] = None,
         dropout: Optional[float] = None,
+        keep_meaningless_bias: bool = False,
     ) -> None:
         super().__init__()
         self.rank = utils.get_rank(weight_layer)
         self.op_order = op_order
+        self.keep_meaningless_bias = keep_meaningless_bias
 
         # Do not modify self.layers directly, use self.update_layer_in_order().
         self.layers = nn.ModuleDict()
@@ -175,7 +177,8 @@ class Block(nn.Module):
     def _check_layers(self) -> None:
         # extract bias -> fuse -> if not fused, move bias to optimal position.
         self.__move_bias_to_independent_layer()
-        self.__remove_meaningless_bias()
+        if not self.keep_meaningless_bias:
+            self.__remove_meaningless_bias()
         self.__fuse_layers_if_faster()
         self.__unravel_fused_layers_if_faster()
         self.__move_bias_to_optimal_position()
@@ -307,9 +310,6 @@ class Block(nn.Module):
         __unravel_biased_activation()
 
     def __move_bias_to_optimal_position(self) -> None:
-        """
-        Determine whether bias_layer is required.
-        """
         if "add_bias" not in self.layers:
             return
         op_before_bias = self.__op_order[

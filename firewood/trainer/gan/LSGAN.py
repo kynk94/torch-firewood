@@ -7,7 +7,6 @@ import torch
 from torch import Tensor
 from torchvision import transforms
 
-from firewood import layers
 from firewood.common.backend import set_runtime_build
 from firewood.common.types import INT
 from firewood.models.gan.LSGAN import Discriminator, Generator
@@ -48,7 +47,6 @@ class LSGAN(pl.LightningModule):
             n_layer=gen_n_layers,
             n_filter=gen_n_filters,
             activation=gen_activation,
-            fir=[1, 3, 3, 1],
             resolution=resolution,
             channels=channels,
         )
@@ -58,9 +56,6 @@ class LSGAN(pl.LightningModule):
             activation=dis_activation,
             resolution=resolution,
             channels=channels,
-        )
-        layers.lr_equalizer(
-            [self.generator, self.discriminator], recursive=True
         )
 
         # metrics
