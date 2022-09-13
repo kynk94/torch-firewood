@@ -1,5 +1,6 @@
 import math
 import re
+from collections import OrderedDict
 from typing import (
     List,
     Literal,
@@ -39,13 +40,6 @@ class _LREqualizer:
         self.target_name = self.name = name
 
     @staticmethod
-    def set_lr_equalization(module: nn.Module, value: bool) -> None:
-        if not isinstance(value, bool):
-            raise TypeError("lr_equalization must be bool type.")
-        if utils.attr_is_value(module, "lr_equalization", not value):
-            setattr(module, "lr_equalization", value)
-
-    @staticmethod
     def is_applicable(module: nn.Module, name: str) -> bool:
         module_name = utils.get_name(module)
         if module_name not in _NEED_RECURSIVE and re.search(
@@ -59,24 +53,20 @@ class _LREqualizer:
             return False
         return True
 
-    def register(self, module: nn.Module) -> None:
-        utils.register_forward_pre_hook_to_index(
-            module=module, hook=self, index=0
-        )
-        self.has_orig(module=module)
-
-    def is_registered(self, module: nn.Module) -> bool:
-        for hook in module._forward_pre_hooks.values():
-            if isinstance(hook, type(self)):
-                return True
-        return False
-
-    def has_orig(self, module: nn.Module) -> None:
+    def __check_target_name_with_orig(self, module: nn.Module) -> None:
         if (
             hasattr(module, self.name + "_orig")
             and self.target_name == self.name
         ):
             self.target_name = self.name + "_orig"
+
+    def register(self, module: nn.Module) -> None:
+        module.register_forward_pre_hook(self)
+        forward_pre_hooks = list(module._forward_pre_hooks.items())
+        module._forward_pre_hooks = OrderedDict(
+            [forward_pre_hooks.pop()] + forward_pre_hooks
+        )
+        self.__check_target_name_with_orig(module=module)
 
     def remove(self, module: nn.Module) -> None:
         with torch.no_grad():
@@ -88,17 +78,17 @@ class _LREqualizer:
         module.register_parameter(
             self.target_name, Parameter(parameter.detach())
         )
-        self.set_lr_equalization(module=module, value=False)
+        _set_lr_equalization(module=module, value=False)
 
     def compute(self, module: nn.Module) -> Tensor:
-        parameter: Parameter = getattr(module, self.name + "_param")
-        gain = getattr(module, f"_{self.name}_gain")
+        parameter: Tensor = getattr(module, self.name + "_param")
+        gain: Tensor = getattr(module, f"_{self.name}_gain")
         if gain != 1.0:
-            parameter = parameter * gain
+            parameter = parameter * gain.to(parameter)
         return parameter
 
     def __call__(self, module: nn.Module, input: Tensor) -> None:
-        self.has_orig(module=module)
+        self.__check_target_name_with_orig(module=module)
         setattr(module, self.target_name, self.compute(module))
 
 
@@ -113,6 +103,7 @@ class BiasLREqualizer(_LREqualizer):
         lr_multiplier: float = 1.0,
         init: float = 0.0,
         recursive: bool = True,
+        keep_value: bool = False,
     ) -> Optional["BiasLREqualizer"]:
         def __recursive_apply() -> Optional[BiasLREqualizer]:
             fn: Optional[BiasLREqualizer] = None
@@ -123,60 +114,55 @@ class BiasLREqualizer(_LREqualizer):
                     lr_multiplier=lr_multiplier,
                     init=init,
                     recursive=False,
+                    keep_value=keep_value,
                 )
                 if fn is None:
                     fn = _fn
             return fn
 
         if utils.attr_is_value(module, "lr_equalization", False):
-            BiasLREqualizer.set_lr_equalization(module=module, value=True)
+            _set_lr_equalization(module=module, value=True)
             return __recursive_apply()
         if recursive:
             return __recursive_apply()
         if not BiasLREqualizer.is_applicable(module=module, name=name):
             return None
 
-        BiasLREqualizer.set_lr_equalization(module=module, value=True)
         fn = BiasLREqualizer(name=name)
         fn.register(module=module)
-        fn.reset_parameters(module, lr_multiplier, init)
+        fn.reset_parameters(module, lr_multiplier, init, keep_value)
         return fn
 
+    @torch.no_grad()
     def reset_parameters(
         self,
         module: nn.Module,
-        lr_multiplier: Optional[float] = None,
+        lr_multiplier: Optional[Union[float, Tensor]] = None,
         init: Optional[float] = None,
+        keep_value: bool = False,
     ) -> None:
         gain_name = f"_{self.name}_gain"
         init_name = f"_{self.name}_init"
         if lr_multiplier is None:
             lr_multiplier = getattr(module, gain_name, 1.0)
+        if not isinstance(lr_multiplier, Tensor):
+            lr_multiplier = torch.tensor(lr_multiplier, dtype=torch.float32)
         if init is None:
             init = cast(float, getattr(module, init_name, 0.0))
 
         original_bias: Tensor = utils.popattr(module, self.target_name)
-        bias = Parameter(
-            torch.full(
-                size=original_bias.shape,
-                fill_value=init,
-                dtype=original_bias.dtype,
-                device=original_bias.device,
-            )
-        )
+        if keep_value:
+            bias = Parameter(original_bias / lr_multiplier.to(original_bias))
+        else:
+            bias = Parameter(torch.full_like(original_bias, fill_value=init))
 
         module.register_parameter(f"{self.name}_param", bias)
         setattr(module, self.target_name, bias.detach())
-        setattr(module, gain_name, lr_multiplier)
+        module.register_buffer(gain_name, lr_multiplier)
         setattr(module, init_name, init)
 
 
 class WeightLREqualizer(_LREqualizer):
-    """
-    Note:
-        LREqualizer hook should be applied after other weight norm hooks.
-    """
-
     def __init__(self, name: str = "weight") -> None:
         super().__init__(name=name)
 
@@ -187,6 +173,7 @@ class WeightLREqualizer(_LREqualizer):
         lr_multiplier: float = 1.0,
         init_std: float = 1.0,
         recursive: bool = True,
+        keep_value: bool = False,
     ) -> Optional["WeightLREqualizer"]:
         def __recursive_apply() -> Optional[WeightLREqualizer]:
             fn: Optional[WeightLREqualizer] = None
@@ -197,13 +184,14 @@ class WeightLREqualizer(_LREqualizer):
                     lr_multiplier=lr_multiplier,
                     init_std=init_std,
                     recursive=False,
+                    keep_value=keep_value,
                 )
                 if fn is None:
                     fn = _fn
             return fn
 
         if utils.attr_is_value(module, "lr_equalization", False):
-            WeightLREqualizer.set_lr_equalization(module=module, value=True)
+            _set_lr_equalization(module=module, value=True)
             return __recursive_apply()
         if recursive:
             return __recursive_apply()
@@ -212,32 +200,46 @@ class WeightLREqualizer(_LREqualizer):
 
         fn = WeightLREqualizer(name=name)
         fn.register(module=module)
-        fn.reset_parameters(module, lr_multiplier, init_std)
+        fn.reset_parameters(module, lr_multiplier, init_std, keep_value)
         return fn
 
+    @torch.no_grad()
     def reset_parameters(
         self,
         module: nn.Module,
-        lr_multiplier: Optional[float] = None,
+        lr_multiplier: Optional[Union[float, Tensor]] = None,
         init_std: Optional[float] = None,
+        keep_value: bool = False,
     ) -> None:
         gain_name = f"_{self.name}_gain"
         init_name = f"_{self.name}_init"
         if lr_multiplier is None:
             lr_multiplier = cast(float, getattr(module, gain_name, 1.0))
+        if not isinstance(lr_multiplier, Tensor):
+            lr_multiplier = torch.tensor(lr_multiplier, dtype=torch.float32)
         if init_std is None:
             init_std = cast(float, getattr(module, init_name, 1.0))
 
         original_weight: Tensor = utils.popattr(module, self.target_name)
-        weight = Parameter(original_weight.detach())
-        init.normal_(weight, mean=0, std=init_std / lr_multiplier)
-        fan_in = weight.detach()[0].numel()
-        weight_gain = lr_multiplier / math.sqrt(fan_in)
+        fan_in = original_weight.detach()[0].numel()
+        gain = lr_multiplier / math.sqrt(fan_in)
+        if keep_value:
+            weight = Parameter(original_weight / gain.to(original_weight))
+        else:
+            weight = Parameter(original_weight.detach())
+            init.normal_(weight, mean=0, std=init_std / lr_multiplier)
 
         module.register_parameter(f"{self.name}_param", weight)
         setattr(module, self.target_name, weight.detach())
-        setattr(module, gain_name, weight_gain)
+        module.register_buffer(gain_name, gain)
         setattr(module, init_name, init_std)
+
+
+def _set_lr_equalization(module: nn.Module, value: bool) -> None:
+    if not isinstance(value, bool):
+        raise TypeError("lr_equalization must be bool type.")
+    if utils.attr_is_value(module, "lr_equalization", not value):
+        setattr(module, "lr_equalization", value)
 
 
 def lr_equalizer(
@@ -249,6 +251,7 @@ def lr_equalizer(
     lr_multiplier: float = 1.0,
     weight_init_std: float = 1.0,
     bias_init: float = 0.0,
+    keep_value: bool = False,
 ) -> Union[nn.Module, nn.ModuleList, List[nn.Module], Tuple[nn.Module, ...]]:
     if isinstance(module, (nn.ModuleList, list, tuple)):
         for _module in module:
@@ -261,6 +264,7 @@ def lr_equalizer(
                 lr_multiplier=lr_multiplier,
                 weight_init_std=weight_init_std,
                 bias_init=bias_init,
+                keep_value=keep_value,
             )
         return module
     BiasLREqualizer.apply(
@@ -269,6 +273,7 @@ def lr_equalizer(
         lr_multiplier=lr_multiplier,
         init=bias_init,
         recursive=True,
+        keep_value=keep_value,
     )
     WeightLREqualizer.apply(
         module=module,
@@ -276,6 +281,7 @@ def lr_equalizer(
         lr_multiplier=lr_multiplier,
         init_std=weight_init_std,
         recursive=True,
+        keep_value=keep_value,
     )
     return module
 
