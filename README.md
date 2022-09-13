@@ -52,7 +52,7 @@ All layers are compatible with official pytorch `nn.Module` and support `ddp` st
 * [x] AdaIN
 * [ ] SPADE
 
-### Introduced from ProGAN
+### Introduced from PGGAN
 
 * [x] Learning rate Equalizer hooks
 
