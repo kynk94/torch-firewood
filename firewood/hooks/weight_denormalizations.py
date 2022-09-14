@@ -10,15 +10,6 @@ from torch.nn import Parameter
 from firewood import utils
 from firewood.layers.linear import Linear
 
-"""
-WeightDeNorm is a hook that applies weight denormalization to a module.
-
-Operations:
-    1. Normalize the weight of the module.
-    2. Apply the weight normalization to the module.
-    3. Apply the weight denormalization to the module.
-"""
-
 
 class WeightDeNormOutput:
     def __init__(self, out_features: int, name: str = "bias") -> None:
