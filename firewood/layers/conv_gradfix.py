@@ -29,7 +29,6 @@ from firewood.common.constant import NULL_TENSOR
 from firewood.common.types import DEVICE, INT, SAME_PADDING
 from firewood.layers import initializers
 from firewood.utils import _pair_padding, _single_padding, _triple_padding
-from firewood.utils.common import is_newer_torch
 
 # Forcefully disable computation of gradients with respect to the weights.
 #
@@ -78,8 +77,6 @@ class _GFixConvNd(nn.Module):
         (int, int): up & bottom, left & right
         (int, int, int, int): up, bottom, left, right
     """
-
-    _groups: int = 1
 
     def __init__(
         self,
@@ -213,27 +210,6 @@ class _GFixConvNd(nn.Module):
                 device = getattr(fn(NULL_TENSOR), "device", "cpu")
             self.device = torch.device(device)
         return super()._apply(fn)
-
-    @property
-    def groups(self) -> int:
-        """
-        `groups` is modified during weight modulation (weight denorm) operation,
-        so need to manage as a property.
-        See `firewood.layers.weight_normalizations.py` for more details.
-        """
-        return self._groups
-
-    @groups.setter
-    def groups(self, value: int) -> None:
-        if self.groups == value:
-            return
-        self._groups = value
-        if getattr(self, "weight_shape", None) is None:
-            return
-        self.weight_shape = (
-            self.out_channels * self.groups,
-            *self.weight_shape[1:],
-        )
 
     @property
     def operation(self) -> Callable[..., Tensor]:
