@@ -10,14 +10,21 @@ from torch.nn import Parameter
 from firewood import utils
 from firewood.layers.linear import Linear
 
+"""
+WeightDeNorm is a hook that applies weight denormalization to a module.
+
+Operations:
+    1. Normalize the weight of the module.
+    2. Apply the weight normalization to the module.
+    3. Apply the weight denormalization to the module.
+"""
+
 
 class WeightDeNormOutput:
     def __init__(self, out_features: int, name: str = "bias") -> None:
         self.out_features = out_features
-        self.name = name
+        self.call_name = self.name = name
         self.demodulation_coef: Optional[Tensor] = None
-
-        self.target_name = self.name
 
     @staticmethod
     def apply(
@@ -29,7 +36,7 @@ class WeightDeNormOutput:
         if isinstance(bias, Parameter):
             delattr(module, "bias")
             module.register_parameter(name + "_orig", Parameter(bias.detach()))
-            setattr(fn, "target_name", name + "_orig")
+            setattr(fn, "call_name", name + "_orig")
             setattr(module, "bias", bias.detach())
         return fn
 
@@ -38,7 +45,7 @@ class WeightDeNormOutput:
         if bias is not None:
             utils.popattr(module, self.name, None)
             module.register_parameter(self.name, Parameter(bias.detach()))
-        delattr(module, self.target_name)
+        delattr(module, self.call_name)
 
     def __call__(
         self, module: nn.Module, input: Tensor, output: Tensor
@@ -75,12 +82,10 @@ class WeightDeNorm:
         pre_normalize: bool = False,
         eps: float = 1e-9,
     ):
-        self.name = name
+        self.call_name = self.name = name
         self.demodulate = demodulate
         self.pre_normalize = pre_normalize
         self.eps = eps
-
-        self.target_name = self.name
 
     @staticmethod
     def apply(
@@ -112,23 +117,19 @@ class WeightDeNorm:
         weight: Union[Tensor, Parameter] = getattr(module, name)
         if isinstance(weight, Parameter):
             delattr(module, name)
-            module.register_parameter(
-                name + "_orig", Parameter(weight.detach())
-            )
-            setattr(fn, "target_name", name + "_orig")
+            fn.call_name += "_orig"
+            module.register_parameter(fn.call_name, weight)
             setattr(module, name, weight.detach())
 
-        setattr(
-            fn, "output_hook", WeightDeNormOutput.apply(module, out_features)
-        )
+        fn.output_hook = WeightDeNormOutput.apply(module, out_features)
         return fn
 
     def remove(self, module: nn.Module) -> None:
-        weight: Optional[Tensor] = getattr(module, self.target_name, None)
+        weight: Optional[Tensor] = getattr(module, self.call_name, None)
         if weight is not None:
             utils.popattr(module, self.name, None)
             module.register_parameter(self.name, Parameter(weight.detach()))
-        delattr(module, self.target_name)
+        delattr(module, self.call_name)
         self.output_hook.remove(module)
 
     def __call__(
@@ -138,9 +139,9 @@ class WeightDeNorm:
             raise ValueError("Expected a tuple of input and modulation.")
         input, modulation_input = inputs[:2]
 
-        weight: Tensor = getattr(module, self.target_name)
+        weight: Tensor = getattr(module, self.call_name)
         weight = weight.to(dtype=input.dtype)
-        gamma: Tensor = getattr(module, "gamma_linear")(modulation_input)
+        gamma: Tensor = module.get_submodule("gamma_linear")(modulation_input)
         gamma = gamma.to(dtype=input.dtype)
 
         if self.demodulate:
@@ -149,17 +150,21 @@ class WeightDeNorm:
             demodulation_coef = self._calc_demodulation_coef(modulated_weight)
 
         # fused operation
-        if hasattr(module, "groups"):
+        original_groups = getattr(module, "groups", None)
+        if original_groups is not None:
             setattr(module, "groups", input.size(0))
+            setattr(module, "groups_orig", original_groups)
             input = input.view(1, -1, *input.shape[2:])
             if self.demodulate:
-                modulated_weight = torch.mul(
-                    modulated_weight, demodulation_coef
-                )
+                modulated_weight = modulated_weight * demodulation_coef
             weight = modulated_weight.view(-1, *modulated_weight.shape[2:])
+            original_weight_shape = getattr(module, "weight_shape", None)
+            if original_weight_shape is not None:
+                setattr(module, "weight_shape", tuple(weight.shape))
+                setattr(module, "weight_shape_orig", original_weight_shape)
         # non-fused operation
         else:
-            input = input * gamma.view(*gamma.shape, *(1,) * (input.ndim - 2))
+            input = input * utils.unsqueeze_view(gamma, -1, input.ndim - 2)
 
         setattr(module, self.name, weight)
         if not hasattr(module, "groups") and self.demodulate:
@@ -167,7 +172,7 @@ class WeightDeNorm:
                 demodulation_coef = demodulation_coef.squeeze(-1)
             setattr(self.output_hook, "demodulation_coef", demodulation_coef)
 
-        bias = getattr(module, self.output_hook.target_name)
+        bias = getattr(module, self.output_hook.call_name)
         if bias is not None:
             # delete module's bias, and assign bias to the forward hook
             setattr(module, self.output_hook.name, None)

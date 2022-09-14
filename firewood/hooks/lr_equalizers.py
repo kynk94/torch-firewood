@@ -37,7 +37,7 @@ _NEED_RECURSIVE = {
 
 class _LREqualizer:
     def __init__(self, name: str) -> None:
-        self.target_name = self.name = name
+        self.call_name = self.name = name
 
     @staticmethod
     def is_applicable(module: nn.Module, name: str) -> bool:
@@ -53,12 +53,9 @@ class _LREqualizer:
             return False
         return True
 
-    def __check_target_name_with_orig(self, module: nn.Module) -> None:
-        if (
-            hasattr(module, self.name + "_orig")
-            and self.target_name == self.name
-        ):
-            self.target_name = self.name + "_orig"
+    def __check_call_name_with_orig(self, module: nn.Module) -> None:
+        if hasattr(module, self.name + "_orig") and self.call_name == self.name:
+            self.call_name = self.name + "_orig"
 
     def register(self, module: nn.Module) -> None:
         module.register_forward_pre_hook(self)
@@ -66,7 +63,7 @@ class _LREqualizer:
         module._forward_pre_hooks = OrderedDict(
             [forward_pre_hooks.pop()] + forward_pre_hooks
         )
-        self.__check_target_name_with_orig(module=module)
+        self.__check_call_name_with_orig(module=module)
 
     def remove(self, module: nn.Module) -> None:
         with torch.no_grad():
@@ -74,10 +71,8 @@ class _LREqualizer:
         delattr(module, self.name + "_param")
         delattr(module, f"_{self.name}_gain")
         delattr(module, f"_{self.name}_init")
-        delattr(module, self.target_name)
-        module.register_parameter(
-            self.target_name, Parameter(parameter.detach())
-        )
+        delattr(module, self.call_name)
+        module.register_parameter(self.call_name, Parameter(parameter.detach()))
         _set_lr_equalization(module=module, value=False)
 
     def compute(self, module: nn.Module) -> Tensor:
@@ -88,8 +83,8 @@ class _LREqualizer:
         return parameter
 
     def __call__(self, module: nn.Module, input: Tensor) -> None:
-        self.__check_target_name_with_orig(module=module)
-        setattr(module, self.target_name, self.compute(module))
+        self.__check_call_name_with_orig(module=module)
+        setattr(module, self.call_name, self.compute(module))
 
 
 class BiasLREqualizer(_LREqualizer):
@@ -150,14 +145,14 @@ class BiasLREqualizer(_LREqualizer):
         if init is None:
             init = cast(float, getattr(module, init_name, 0.0))
 
-        original_bias: Tensor = utils.popattr(module, self.target_name)
+        original_bias: Tensor = utils.popattr(module, self.call_name)
         if keep_value:
             bias = Parameter(original_bias / lr_multiplier.to(original_bias))
         else:
             bias = Parameter(torch.full_like(original_bias, fill_value=init))
 
         module.register_parameter(f"{self.name}_param", bias)
-        setattr(module, self.target_name, bias.detach())
+        setattr(module, self.call_name, bias.detach())
         module.register_buffer(gain_name, lr_multiplier)
         setattr(module, init_name, init)
 
@@ -220,7 +215,7 @@ class WeightLREqualizer(_LREqualizer):
         if init_std is None:
             init_std = cast(float, getattr(module, init_name, 1.0))
 
-        original_weight: Tensor = utils.popattr(module, self.target_name)
+        original_weight: Tensor = utils.popattr(module, self.call_name)
         fan_in = original_weight.detach()[0].numel()
         gain = lr_multiplier / math.sqrt(fan_in)
         if keep_value:
@@ -230,7 +225,7 @@ class WeightLREqualizer(_LREqualizer):
             init.normal_(weight, mean=0, std=init_std / lr_multiplier)
 
         module.register_parameter(f"{self.name}_param", weight)
-        setattr(module, self.target_name, weight.detach())
+        setattr(module, self.call_name, weight.detach())
         module.register_buffer(gain_name, gain)
         setattr(module, init_name, init_std)
 
