@@ -1,5 +1,5 @@
 import math
-from typing import Any, Literal, Optional, Tuple, Union
+from typing import Literal, Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
@@ -9,8 +9,6 @@ from torch.nn import Parameter
 
 from firewood import utils
 from firewood.layers.linear import Linear
-
-PRE_NORMALIZE = Optional[Literal["stylegan2", "stylegan3"]]
 
 
 class WeightDeNormOutput:
@@ -196,7 +194,7 @@ class WeightDeNorm:
 
 def _normalize_pre_normalize_arg(
     pre_normalize: Optional[str] = None,
-) -> PRE_NORMALIZE:
+) -> Optional[Literal["stylegan2", "stylegan3"]]:
     if pre_normalize is None:
         return None
     if pre_normalize.endswith("2"):
