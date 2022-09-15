@@ -105,6 +105,30 @@ def search_attr(obj: Any, keys: Union[str, Iterable[str]]) -> Any:
     return attr
 
 
+def keep_setattr(
+    obj: Any, attr: str, value: Any, keep_attr: Optional[str] = None
+) -> None:
+    """
+    Set `value` to `attr` and keep the original value to a new attribute
+    `keep_attr`.
+    If `keep_attr` is originally existed, it will be overwritten.
+
+    Args:
+        obj: The object to set attribute.
+        attr: The attribute to set.
+        value: The value to set.
+        keep_attr: The attribute to keep the original value.
+            If `None`, the original value will be kept in "`attr`_orig".
+            So if `attr` is "weight" and use `torch.nn.utils.spectral_norm` or
+            `torch.nn.utils.weight_norm` which are using "weight_orig" to keep
+            the original weight, should not declare `keep_attr` as "weight_orig".
+    """
+    if not hasattr(obj, attr):
+        raise AttributeError(f"'{obj}' object has no attribute '{attr}'")
+    setattr(obj, keep_attr or f"{attr}_orig", getattr(obj, attr))
+    setattr(obj, attr, value)
+
+
 def normalize_int_tuple(value: Union[INT, Tensor], n: int) -> Tuple[int, ...]:
     if isinstance(value, Tensor):
         numel = value.numel()

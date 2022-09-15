@@ -101,6 +101,24 @@ def get_in_out_features(module: nn.Module) -> Tuple[int, int]:
     return in_features, out_features
 
 
+def unsqueeze_repeatedly(
+    tensor: Tensor, dim: int, times: int, inplace: bool = False
+) -> Tensor:
+    if inplace:
+        for _ in range(times):
+            tensor.unsqueeze_(dim)
+        return tensor
+    for _ in range(times):
+        tensor = tensor.unsqueeze(dim)
+    return tensor
+
+
+def unsqueeze_view(tensor: Tensor, dim: int, times: int) -> Tensor:
+    if dim < 0:
+        dim += tensor.ndim + 1
+    return tensor.view(tensor.shape[:dim] + (1,) * times + tensor.shape[dim:])
+
+
 def _single_padding(
     obj: Union[SAME_PADDING, INT]
 ) -> Union[SAME_PADDING, Tuple[int]]:
