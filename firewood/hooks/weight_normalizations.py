@@ -4,15 +4,14 @@ from typing import Any, Callable, Optional
 import torch.nn as nn
 from torch.nn.utils import spectral_norm, weight_norm
 
+from firewood import utils
 from firewood.hooks.weight_denormalizations import weight_denorm
 
 
 def get(
     normalization: str,
     n_power_iterations: int = 1,
-    modulation_features: Optional[int] = None,
     demodulate: bool = True,
-    pre_normalize: bool = False,
     eps: float = 1e-9,
     **kwargs: Any,
 ) -> Optional[Callable[..., nn.Module]]:
@@ -31,12 +30,19 @@ def get(
     if normalization in {
         "demodulation",
         "weight_demodulation",
+        "dn",
         "denorm",
         "weight_denorm",
         "weight_denormalization",
     }:
+        modulation_features = utils.search_kwargs(
+            kwargs, ("modulation_features", "mf"), None, pop=True
+        )
         if modulation_features is None:
             raise ValueError("modulation_features must be specified.")
+        pre_normalize = utils.search_kwargs(
+            kwargs, ("pre_normalize", "pn"), "stylegan2", pop=True
+        )
         return functools.partial(
             weight_denorm,
             modulation_features=modulation_features,
