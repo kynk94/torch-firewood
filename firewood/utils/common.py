@@ -78,6 +78,24 @@ def updated_dict(
     return copy
 
 
+def search_kwargs(
+    kwargs: Dict[str, Any],
+    keys: Union[str, Iterable[str]],
+    default: Any = "__default",
+    pop: bool = False,
+) -> Any:
+    if isinstance(keys, str):
+        return kwargs.get(keys, default)
+    for key in keys:
+        if key in kwargs:
+            if pop:
+                return kwargs.pop(key)
+            return kwargs.get(key)
+    if default != "__default":
+        return default
+    raise KeyError(f"None of {keys} is found in {kwargs}.")
+
+
 def attr_is_value(obj: Any, attr: str, value: Any) -> bool:
     if not hasattr(obj, attr):
         return False
@@ -106,12 +124,16 @@ def search_attr(obj: Any, keys: Union[str, Iterable[str]]) -> Any:
 
 
 def keep_setattr(
-    obj: Any, attr: str, value: Any, keep_attr: Optional[str] = None
+    obj: Any,
+    attr: str,
+    value: Any,
+    keep_attr: Optional[str] = None,
+    overwrite: bool = False,
 ) -> None:
     """
     Set `value` to `attr` and keep the original value to a new attribute
     `keep_attr`.
-    If `keep_attr` is originally existed, it will be overwritten.
+    If `overwrite` is True, overwrite value of `keep_attr` if it already exists.
 
     Args:
         obj: The object to set attribute.
@@ -125,7 +147,10 @@ def keep_setattr(
     """
     if not hasattr(obj, attr):
         raise AttributeError(f"'{obj}' object has no attribute '{attr}'")
-    setattr(obj, keep_attr or f"{attr}_orig", getattr(obj, attr))
+    if keep_attr is None:
+        keep_attr = f"{attr}_orig"
+    if not hasattr(obj, keep_attr) or overwrite:
+        setattr(obj, keep_attr, getattr(obj, attr))
     setattr(obj, attr, value)
 
 

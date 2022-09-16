@@ -127,9 +127,8 @@ class _GFixConvNd(nn.Module):
                 in_channels // groups,
                 *kernel_size,
             )
-        self.weight_shape = weight_shape
         self.weight = Parameter(
-            torch.empty(self.weight_shape, dtype=dtype, device=self.device)
+            torch.empty(weight_shape, dtype=dtype, device=self.device)
         )
 
         if bias:
@@ -155,8 +154,7 @@ class _GFixConvNd(nn.Module):
             self.padding_mode = padding_mode
 
         if isinstance(padding, str):
-            padding = padding.lower()  # type: ignore
-            if padding != "same":
+            if padding.lower() != "same":
                 raise ValueError("Only 'same' padding is supported")
             padding = _calc_same_padding(
                 transposed=self.transposed,
@@ -219,7 +217,7 @@ class _GFixConvNd(nn.Module):
             padding = self.padding
         return _load_operation(
             transposed=self.transposed,
-            weight_shape=self.weight_shape,
+            weight_shape=self.weight.shape,
             stride=self.stride,
             padding=padding,
             output_padding=self.output_padding,
@@ -237,7 +235,8 @@ class _GFixConvNd(nn.Module):
                 mode=self.padding_mode,
                 value=self.padding_value,
             )
-        output = self.operation(input, self.weight, self.bias)
+        bias = self.bias.to(input.dtype) if self.bias is not None else None
+        output = self.operation(input, self.weight.to(input.dtype), bias)
         if self.conv_transpose_pad:
             # cropping
             output = F.pad(
@@ -501,8 +500,7 @@ def _calc_padding(rank: int, padding: INT) -> Tuple[int, ...]:
         reversed_pad = [
             padding[i * 2 : (i + 1) * 2] for i in range(rank - 1, -1, -1)
         ]
-        flatten_pad = tuple(itertools.chain.from_iterable(reversed_pad))
-        padding = flatten_pad
+        padding = tuple(itertools.chain.from_iterable(reversed_pad))
     else:
         raise ValueError("Invalid padding: {}".format(padding))
     if len(set(padding)) == 1:
@@ -925,7 +923,7 @@ def _load_operation(
                     dilation=dilation,
                     groups=groups,
                     device=device,
-                )(grad_output, second_grad_weight, None)
+                )(grad_output, second_grad_weight.to(grad_output.dtype), None)
                 if second_grad_input.shape != input_shape:
                     raise ValueError(
                         "second_grad_input shape mismatch in backward of GFixConvNdGradWeight"

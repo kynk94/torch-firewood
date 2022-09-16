@@ -6,9 +6,7 @@ from firewood.hooks.lr_equalizers import lr_equalizer, remove_lr_equalizer
 from firewood.layers.conv_blocks import Conv2dBlock
 
 
-def test_assign_remove():
-    x = torch.randn(1, 3, 64, 64)
-
+def test_assign_and_remove():
     kwargs = dict(bias=True, activation="lrelu")
     model = nn.Sequential(
         Conv2dBlock(3, 3, 3, 2, 1, **kwargs),
@@ -16,16 +14,16 @@ def test_assign_remove():
     )
     lr_equalizer(model)
 
-    for layer in model:
-        assert hasattr(layer.layers["weighting"], "weight_param")
-        assert hasattr(layer.layers["activation"], "bias_param")
+    for block in model:
+        assert hasattr(block.layers["weighting"], "weight_param")
+        assert hasattr(block.layers["activation"], "bias_param")
 
     remove_lr_equalizer(model)
 
-    for layer in model:
-        if hasattr(layer.layers["weighting"], "weight_param"):
-            raise ValueError("No weight_param found.")
-        assert not hasattr(layer.layers["activation"], "bias_param")
+    for block in model:
+        if hasattr(block.layers["weighting"], "weight_param"):
+            raise ValueError("weight_param found.")
+        assert not hasattr(block.layers["activation"], "bias_param")
 
 
 def test_with_nn():
