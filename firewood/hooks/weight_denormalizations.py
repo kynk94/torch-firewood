@@ -87,15 +87,11 @@ class WeightDeNorm:
         pre_normalize: Optional[str] = None,
         eps: float = 1e-9,
     ) -> "WeightDeNorm":
-        if getattr(module, "groups", 1) != 1:
-            raise ValueError(
-                "WeightDeNorm not support convolution with groups > 1"
-            )
-
         fn = WeightDeNorm(name, demodulate, pre_normalize, eps)
         module.register_forward_pre_hook(fn)  # type: ignore
         setattr(module, "use_external_input", True)
-        setattr(module, "groups_orig", module.groups)
+        if hasattr(module, "groups"):
+            setattr(module, "groups_orig", module.groups)
 
         in_features, out_features = utils.get_in_out_features(module)
         gamma_affine = Linear(
