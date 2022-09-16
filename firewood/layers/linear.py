@@ -48,7 +48,11 @@ class Linear(nn.Linear):
             initializers.get(self.bias_initializer)(self.bias)
 
     def forward(self, input: Tensor) -> Tensor:
-        return F.linear(input.flatten(1), self.weight, self.bias)
+        return F.linear(
+            input=input.flatten(1),
+            weight=self.weight.to(input.dtype),
+            bias=self.bias.to(input.dtype) if self.bias is not None else None,
+        )
 
     def extra_repr(self) -> str:
         return super().extra_repr() + ", ".join(
