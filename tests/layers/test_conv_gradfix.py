@@ -357,6 +357,10 @@ def test_conv_with_nn_gpu(rank: int, stride: int, padding: int) -> None:
     y_custom: Tensor = custom_conv(x_custom)
     y_original: Tensor = nn_conv(x_original)
 
+    assert torch.allclose(
+        y_custom, y_original
+    ), f"Forward output mismatch. l1: {F.l1_loss(y_custom, y_original)}"
+
     loss_custom = y_custom.square().sum()
     loss_original = y_original.square().sum()
 
@@ -368,9 +372,6 @@ def test_conv_with_nn_gpu(rank: int, stride: int, padding: int) -> None:
     )[0]
 
     absolute_tolerence = 1e-3 * 10**rank
-    assert torch.allclose(
-        y_custom, y_original
-    ), f"Forward output mismatch. l1: {F.l1_loss(y_custom, y_original)}"
     assert torch.allclose(
         weight_grad_custom, weight_grad_original, atol=absolute_tolerence
     ), f"Forward weight_grad mismatch. l1: {F.l1_loss(weight_grad_custom, weight_grad_original)}"
@@ -449,6 +450,10 @@ def test_conv_transpose_with_nn_cpu(
     y_custom: Tensor = custom_conv(x_custom)
     y_original: Tensor = nn_conv(x_original)
 
+    assert torch.allclose(
+        y_custom, y_original
+    ), f"Forward output mismatch. l1: {F.l1_loss(y_custom, y_original)}"
+
     loss_custom = y_custom.square().sum()
     loss_original = y_original.square().sum()
 
@@ -460,9 +465,6 @@ def test_conv_transpose_with_nn_cpu(
     )[0]
 
     absolute_tolerence = 1e-7 * 10**rank
-    assert torch.allclose(
-        y_custom, y_original, atol=absolute_tolerence
-    ), f"Forward output mismatch. l1: {F.l1_loss(y_custom, y_original)}"
     assert torch.allclose(
         weight_grad_custom, weight_grad_original, atol=absolute_tolerence
     ), f"Forward weight_grad mismatch. l1: {F.l1_loss(weight_grad_custom, weight_grad_original)}"
