@@ -1,5 +1,6 @@
 import pytest
 import torch
+import torch.nn.functional as F
 
 from firewood.hooks.weight_denormalizations import remove_weight_denorm
 from firewood.layers.conv_blocks import Conv2dBlock
@@ -50,7 +51,9 @@ def test_with_stylegan2(dtype: torch.dtype) -> None:
         x, weight, styles, flip_weight=True
     )
 
-    assert torch.allclose(output_custom, output_official)
+    assert torch.allclose(
+        output_custom, output_official
+    ), f"Forward result mismatch. l1: {F.l1_loss(output_custom, output_official)}"
 
 
 def test_with_stylegan3() -> None:
@@ -72,4 +75,6 @@ def test_with_stylegan3() -> None:
     styles = block.layers["weighting"].gamma_affine(s)
     output_official = networks_stylegan3.modulated_conv2d(x, weight, styles)
 
-    assert torch.allclose(output_custom, output_official)
+    assert torch.allclose(
+        output_custom, output_official
+    ), f"Forward result mismatch. l1: {F.l1_loss(output_custom, output_official)}"

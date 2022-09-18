@@ -9,6 +9,27 @@ from firewood.common.types import DEVICE, INT, SAME_PADDING
 from firewood.utils.common import search_attr
 
 
+def _arg_to(
+    arg: Any,
+    dtype: Optional[torch.dtype] = None,
+    device: Optional[DEVICE] = None,
+    non_blocking: bool = True,
+) -> Any:
+    if isinstance(arg, Tensor):
+        if device is not None and not is_cuda(device):
+            arg = arg.detach()
+        return arg.to(dtype=dtype, device=device, non_blocking=non_blocking)
+    if isinstance(arg, dict):
+        return kwargs_to(
+            **arg, dtype=dtype, device=device, non_blocking=non_blocking
+        )
+    if isinstance(arg, Sequence):
+        return args_to(
+            *arg, dtype=dtype, device=device, non_blocking=non_blocking
+        )
+    return arg
+
+
 def args_to(
     *args: Any,
     dtype: Optional[torch.dtype] = None,
@@ -17,19 +38,7 @@ def args_to(
 ) -> Any:
     outputs = []
     for arg in args:
-        if isinstance(arg, Sequence):
-            arg = args_to(
-                *arg, dtype=dtype, device=device, non_blocking=non_blocking
-            )
-        elif isinstance(arg, dict):
-            arg = kwargs_to(
-                **arg, dtype=dtype, device=device, non_blocking=non_blocking
-            )
-        elif isinstance(arg, Tensor):
-            if device is not None and not is_cuda(device):
-                arg = arg.detach()
-            arg = arg.to(dtype=dtype, device=device, non_blocking=non_blocking)
-        outputs.append(arg)
+        outputs.append(_arg_to(arg, dtype, device, non_blocking))
     return tuple(outputs)
 
 
@@ -48,19 +57,7 @@ def kwargs_to(
         )
     outputs = dict()
     for key, arg in kwargs.items():
-        if isinstance(arg, Sequence):
-            arg = args_to(
-                *arg, dtype=dtype, device=device, non_blocking=non_blocking
-            )
-        elif isinstance(arg, dict):
-            arg = kwargs_to(
-                **arg, dtype=dtype, device=device, non_blocking=non_blocking
-            )
-        elif isinstance(arg, Tensor):
-            if device is not None and not is_cuda(device):
-                arg = arg.detach()
-            arg = arg.to(dtype=dtype, device=device, non_blocking=non_blocking)
-        outputs[key] = arg
+        outputs[key] = _arg_to(arg, dtype, device, non_blocking)
     return outputs
 
 
