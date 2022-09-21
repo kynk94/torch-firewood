@@ -86,6 +86,100 @@ class MappingNetwork(nn.Module):
         return output
 
 
+class InitialInput(nn.Module):
+    def __init__(
+        self, channels: int, size: int = 4, trainable: bool = False
+    ) -> None:
+        super().__init__()
+        self.channels = channels
+        self.size = size
+        self.input = nn.Parameter(
+            torch.randn(1, self.channels, self.size, self.size),
+            requires_grad=trainable,
+        )
+
+    def forward(self, input: Tensor) -> Tensor:
+        return self.input.expand(input.size(0), -1, -1, -1)
+
+
+class Generator(nn.Module):
+    def __init__(
+        self,
+        style_dim: int = 512,
+        out_channels: int = 3,
+        max_channels: int = 512,
+        channels_decay: float = 1.0,
+        resolution: INT = 1024,
+        first_input_type: str = "constant",
+        activation: str = "lrelu",
+        noise: Optional[str] = "normal",
+        fir: NUMBER = [1, 2, 1],
+        dtype: torch.dtype = torch.float32,
+    ) -> None:
+        super().__init__()
+        if resolution < 4:
+            raise ValueError("`resolution` must be >= 4")
+        elif resolution != utils.highest_power_of_2(resolution):
+            raise ValueError(
+                f"`resolution` must be a power of 2, but got {resolution}"
+            )
+        self.out_channels = out_channels
+        self.max_channels = max_channels
+        self.channels_decay = channels_decay
+        self.first_input_type = self._check_first_input_type(first_input_type)
+        self.n_layers = int(math.log2(resolution))
+
+        self.layers = nn.ModuleList()
+        # TODO: implement details
+        for i in range(self.n_layers):
+            if i == 0:
+                in_channels = out_channels = self.get_channels(1)
+                if first_input_type == "constant":
+                    self.first_input = InitialInput(
+                        in_channels, trainable=False
+                    )
+                elif first_input_type == "trainable":
+                    self.first_input = InitialInput(in_channels, trainable=True)
+                continue
+            elif i < self.n_layers - 1:
+                in_channels = out_channels
+            else:
+                in_channels = out_channels
+            out_channels = self.get_channels(i + 1)
+            block = layers.Conv2dBlock(
+                in_channels, out_channels, 3, 1, 1, activation=activation
+            )
+            self.layers.append(block)
+
+        self.to_images = nn.ModuleList()
+
+    def _check_first_input_type(self, first_input_type: str) -> str:
+        if first_input_type == "constant":
+            return "constant"
+        if first_input_type == "trainable":
+            return "trainable"
+        raise ValueError(
+            "Currently one of {'constant', 'trainable'} is supported as "
+            f"`first_input_type`. Received {first_input_type}"
+        )
+
+    def _get_first_layer(self):
+        in_channels = self.get_channels(1)
+        if self.first_input_type == "constant":
+            self.first_input = InitialInput(in_channels, trainable=False)
+        elif self.first_input_type == "trainable":
+            self.first_input = InitialInput(in_channels, trainable=True)
+
+    def get_channels(self, resolution: int) -> int:
+        return min(
+            self.max_channels,
+            2 ** (14 - math.log2(resolution) * self.channels_decay),
+        )
+
+    def forward(self, input: Tensor) -> Tensor:
+        return input
+
+
 def main() -> None:
     import pytorch_lightning as pl
     from pytorch_lightning.utilities.model_summary import summarize
