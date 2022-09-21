@@ -863,3 +863,89 @@ def test_same_padding_with_tensorflow(
     assert not torch.allclose(
         original_input, torch_input, rtol=1e-4, atol=1e-5
     ), f"Input value should be changed after backward. l1: {F.l1_loss(original_input, torch_input)}"
+
+
+@runif(min_torch="1.9.0")
+@pytest.mark.parametrize("rank", [1, 2, 3])
+def test_same_padding_with_nn(rank: int) -> None:
+    lr = 1e-2
+    in_channels = 3
+    out_channels = 10
+    kernel_size = 5
+    stride = 1
+    embedding_size = 10
+
+    x_custom = torch.randn(
+        size=(2, in_channels, *(embedding_size,) * rank), requires_grad=True
+    )
+    x_original = x_custom.detach().requires_grad_()
+
+    custom_operation: Type[conv_gradfix._GFixConvNd] = getattr(
+        conv_gradfix, f"GFixConv{rank}d"
+    )
+    nn_operation: Type[nn.modules.conv._ConvNd] = getattr(nn, f"Conv{rank}d")
+    custom_conv = custom_operation(
+        in_channels=in_channels,
+        out_channels=out_channels,
+        kernel_size=kernel_size,
+        stride=stride,
+        padding="same",
+        bias=True,
+    )
+    nn_conv = nn_operation(
+        in_channels=in_channels,
+        out_channels=out_channels,
+        kernel_size=kernel_size,
+        stride=stride,
+        padding="same",
+        bias=True,
+    )
+    nn_conv.weight.data = custom_conv.weight.data
+    nn_conv.bias.data = custom_conv.bias.data
+
+    custom_parameters = [x_custom, *custom_conv.parameters()]
+    original_parameters = [x_original, *nn_conv.parameters()]
+    optimizer_custom = torch.optim.Adam(custom_parameters, lr=lr)
+    optimizer_original = torch.optim.Adam(original_parameters, lr=lr)
+    optimizer_custom.zero_grad()
+    optimizer_original.zero_grad()
+
+    y_custom: Tensor = custom_conv(x_custom)
+    y_original: Tensor = nn_conv(x_original)
+
+    assert torch.allclose(
+        y_custom, y_original
+    ), f"Forward output mismatch. l1: {F.l1_loss(y_custom, y_original)}"
+
+    loss_custom = y_custom.square().sum()
+    loss_original = y_original.square().sum()
+
+    weight_grad_custom = torch.autograd.grad(
+        outputs=[loss_custom], inputs=[custom_conv.weight], create_graph=True
+    )[0]
+    weight_grad_original = torch.autograd.grad(
+        outputs=[loss_original], inputs=[nn_conv.weight], create_graph=True
+    )[0]
+
+    absolute_tolerence = 1e-7 * 10**rank
+    assert torch.allclose(
+        weight_grad_custom, weight_grad_original, atol=absolute_tolerence
+    ), f"Forward weight_grad mismatch. l1: {F.l1_loss(weight_grad_custom, weight_grad_original)}"
+
+    loss_custom += weight_grad_custom.square().sum()
+    loss_original += weight_grad_original.square().sum()
+    loss_custom.backward()
+    loss_original.backward()
+
+    optimizer_custom.step()
+    optimizer_original.step()
+
+    assert torch.allclose(
+        x_custom, x_original
+    ), f"Backward input mismatch. l1: {F.l1_loss(x_custom, x_original)}"
+    assert torch.allclose(
+        custom_conv.weight, nn_conv.weight
+    ), f"Backward weight mismatch. l1: {F.l1_loss(custom_conv.weight, nn_conv.weight)}"
+    assert torch.allclose(
+        custom_conv.bias, nn_conv.bias
+    ), f"Backward bias mismatch. l1: {F.l1_loss(custom_conv.bias, nn_conv.bias)}"

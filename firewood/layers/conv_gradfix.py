@@ -235,8 +235,7 @@ class _GFixConvNd(nn.Module):
                 mode=self.padding_mode,
                 value=self.padding_value,
             )
-        bias = self.bias.to(input.dtype) if self.bias is not None else None
-        output = self.operation(input, self.weight.to(input.dtype), bias)
+        output = self.operation(input, self.weight, self.bias)
         if self.conv_transpose_pad:
             # cropping
             output = F.pad(
