@@ -4,6 +4,7 @@ imageio
 imageio-ffmpeg
 isort
 mypy
+natsort
 ninja
 pre-commit
 pytest

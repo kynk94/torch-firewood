@@ -18,12 +18,11 @@ from typing import (
 
 import numpy as np
 import torchvision.datasets as TD
+from natsort import natsort_keygen
 from numpy import ndarray
 from PIL import Image
 from torch.utils.data import ConcatDataset, DataLoader, Dataset, Subset
 from torchvision.datasets import ImageFolder, VisionDataset
-
-from firewood.utils.sort import numeric_string_sort
 
 try:
     import albumentations as A
@@ -224,7 +223,7 @@ def make_condition_dataset(
             )
         item = (file, condition_file)
         instances.append(item)
-    instances.sort(key=numeric_string_sort)
+    instances.sort(key=natsort_keygen)
     return instances
 
 
@@ -253,7 +252,7 @@ def make_no_class_dataset(
             continue
         item = (file, 0)
         instances.append(item)
-    instances.sort(key=numeric_string_sort)
+    instances.sort(key=natsort_keygen)
     return instances
 
 
