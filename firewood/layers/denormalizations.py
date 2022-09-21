@@ -48,6 +48,8 @@ class AdaptiveNorm(DeNorm):
     https://github.com/xunhuang1995/AdaIN-style
     """
 
+    use_external_input = True
+
     def __init__(
         self,
         num_features: int,
@@ -71,7 +73,6 @@ class AdaptiveNorm(DeNorm):
             eps=eps,
             **normalization_kwargs,
         )
-        self.use_external_input = True
         self.num_features = num_features
         self.modulation_features = modulation_features or num_features
         self.use_projection = use_projection or use_separate_projection
@@ -82,7 +83,7 @@ class AdaptiveNorm(DeNorm):
             return
 
         if self.modulation_features_shape is None:
-            raise ValueError("modulation_features_shape must be specified.")
+            self.modulation_features_shape = (self.modulation_features,)
         in_features = math.prod(self.modulation_features_shape)
         linear_kwargs: Any = dict(
             in_features=in_features,
@@ -119,7 +120,10 @@ class AdaptiveNorm(DeNorm):
                 beta = beta.unsqueeze(-1)
             gamma = gamma + 1.0
         else:
-            assert input.ndim == modulation_input.ndim
+            assert input.ndim == modulation_input.ndim, (
+                f"input.ndim={input.ndim} != "
+                f"modulation_input.ndim={modulation_input.ndim}"
+            )
             # TODO: support jit condition
             assert all(i != 1 for i in modulation_input.shape[2:])
             var, beta = torch.var_mean(
@@ -136,7 +140,6 @@ class AdaptiveNorm(DeNorm):
     def extra_repr(self) -> str:
         return super().extra_repr() + ", ".join(
             [
-                "",
                 f"unbiased={self.unbiased}",
                 f"use_projection={self.use_projection}",
                 f"use_separate_projection={self.use_separate_projection}",

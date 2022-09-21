@@ -102,7 +102,9 @@ class InitialInput(nn.Module):
         return self.input.expand(input.size(0), -1, -1, -1)
 
 
-class Generator(nn.Module):
+class SynthesisNetwork(nn.Module):
+    initial_resolution = 4
+
     def __init__(
         self,
         style_dim: int = 512,
@@ -110,74 +112,109 @@ class Generator(nn.Module):
         max_channels: int = 512,
         channels_decay: float = 1.0,
         resolution: INT = 1024,
-        first_input_type: str = "constant",
+        initial_input_type: str = "constant",
         activation: str = "lrelu",
         noise: Optional[str] = "normal",
         fir: NUMBER = [1, 2, 1],
-        dtype: torch.dtype = torch.float32,
     ) -> None:
         super().__init__()
-        if resolution < 4:
-            raise ValueError("`resolution` must be >= 4")
-        elif resolution != utils.highest_power_of_2(resolution):
-            raise ValueError(
-                f"`resolution` must be a power of 2, but got {resolution}"
-            )
+        self.style_dim = style_dim
         self.out_channels = out_channels
         self.max_channels = max_channels
         self.channels_decay = channels_decay
-        self.first_input_type = self._check_first_input_type(first_input_type)
-        self.n_layers = int(math.log2(resolution))
+        self.resolution = self._check_resolution(resolution)
+        self.initial_input_type = initial_input_type
+        self.n_layers = int(math.log2(resolution)) - 1
 
         self.layers = nn.ModuleList()
-        # TODO: implement details
+        conv_kwargs = dict(
+            kernel_size=3,
+            stride=1,
+            padding="same",
+            bias=True,
+            activation=activation,
+            noise=noise,
+            op_order="WAN",
+        )
+        up_conv_kwargs = utils.updated_dict(
+            conv_kwargs,
+            fir=fir,
+            fir_args=dict(up=2),
+        )
         for i in range(self.n_layers):
+            resolution = 2 ** (i + 2)
             if i == 0:
-                in_channels = out_channels = self.get_channels(1)
-                if first_input_type == "constant":
-                    self.first_input = InitialInput(
-                        in_channels, trainable=False
+                in_channels = self.get_channels(self.initial_resolution)
+                out_channels = in_channels
+                self.layers.append(self._get_initial_input(in_channels))
+                self.layers.append(
+                    layers.AdaptiveNorm(
+                        in_channels, style_dim, use_projection=True
                     )
-                elif first_input_type == "trainable":
-                    self.first_input = InitialInput(in_channels, trainable=True)
-                continue
-            elif i < self.n_layers - 1:
-                in_channels = out_channels
+                )
             else:
                 in_channels = out_channels
-            out_channels = self.get_channels(i + 1)
+                out_channels = self.get_channels(resolution)
+                block = layers.Conv2dBlock(
+                    in_channels, out_channels, **up_conv_kwargs
+                )
+                block.update_layer_in_order(
+                    "normalization",
+                    layers.AdaptiveNorm(
+                        out_channels, style_dim, use_projection=True
+                    ),
+                )
+                self.layers.append(block)
             block = layers.Conv2dBlock(
-                in_channels, out_channels, 3, 1, 1, activation=activation
+                out_channels, out_channels, **conv_kwargs
+            )
+            block.update_layer_in_order(
+                "normalization",
+                layers.AdaptiveNorm(
+                    out_channels, style_dim, use_projection=True
+                ),
             )
             self.layers.append(block)
 
+        # TODO: implement progressive growing
         self.to_images = nn.ModuleList()
 
-    def _check_first_input_type(self, first_input_type: str) -> str:
-        if first_input_type == "constant":
-            return "constant"
-        if first_input_type == "trainable":
-            return "trainable"
-        raise ValueError(
-            "Currently one of {'constant', 'trainable'} is supported as "
-            f"`first_input_type`. Received {first_input_type}"
-        )
-
-    def _get_first_layer(self):
-        in_channels = self.get_channels(1)
-        if self.first_input_type == "constant":
-            self.first_input = InitialInput(in_channels, trainable=False)
-        elif self.first_input_type == "trainable":
-            self.first_input = InitialInput(in_channels, trainable=True)
+    def forward(self, input: Tensor) -> Tensor:
+        """
+        input: style vector (w)
+        """
+        output = self.layers[0](input)
+        for layer in self.layers[1:]:
+            output = layer(output, input)
+        return output
 
     def get_channels(self, resolution: int) -> int:
         return min(
             self.max_channels,
-            2 ** (14 - math.log2(resolution) * self.channels_decay),
+            int(2 ** (14 - math.log2(resolution) * self.channels_decay)),
         )
 
-    def forward(self, input: Tensor) -> Tensor:
-        return input
+    def _check_resolution(self, resolution: int) -> int:
+        if resolution < self.initial_resolution:
+            raise ValueError(
+                f"`resolution` must be >= {self.initial_resolution}"
+            )
+        if resolution != utils.highest_power_of_2(resolution):
+            raise ValueError(
+                f"`resolution` must be a power of 2, but got {resolution}"
+            )
+        return resolution
+
+    def _get_initial_input(self, in_channels: int) -> nn.Module:
+        kwargs = dict(channels=in_channels, size=self.initial_resolution)
+        if self.initial_input_type == "constant":
+            return InitialInput(trainable=False, **kwargs)
+        if self.initial_input_type == "trainable":
+            return InitialInput(trainable=True, **kwargs)
+        raise ValueError(
+            "Currently one of {'constant', 'trainable'} is supported as "
+            f"`initial_input_type`. Received {self.initial_input_type}"
+        )
 
 
 def main() -> None:
@@ -194,6 +231,7 @@ def main() -> None:
             latent_dim: int = 512,
             style_dim: int = 512,
             label_dim: int = 128,
+            resolution: int = 1024,
         ) -> None:
             super().__init__()
             self.mapping = MappingNetwork(
@@ -203,13 +241,17 @@ def main() -> None:
                 style_dim=style_dim,
                 n_layers=8,
             )
+            self.synthesis = SynthesisNetwork(
+                style_dim=style_dim,
+                resolution=resolution,
+            )
             self.example_input_array = (torch.empty(2, latent_dim),)
             if label_dim:
                 self.example_input_array += (torch.empty(2, label_dim),)
 
         def forward(self, input: Tensor, label: Optional[Tensor] = None) -> Tensor:  # type: ignore
             style_vector: Tensor = self.mapping(input, label)
-            return style_vector
+            return self.synthesis(style_vector)
 
     summary = Summary()
     print(summary)

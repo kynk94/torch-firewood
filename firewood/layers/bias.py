@@ -66,7 +66,7 @@ class Bias(nn.Module):
     def extra_repr(self) -> str:
         return ", ".join(
             [
-                f"size={self.bias.shape if self.bias is not None else None}",
+                f"size={self.bias.shape[0] if self.bias is not None else None}",
                 f"bias_add_dim={self.bias_add_dim}",
                 f"initializer={self.initializer}",
                 f"dtype={self.dtype}",
