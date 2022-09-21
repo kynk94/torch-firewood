@@ -223,7 +223,7 @@ def make_condition_dataset(
             )
         item = (file, condition_file)
         instances.append(item)
-    instances.sort(key=natsort_keygen)
+    instances.sort(key=natsort_keygen())
     return instances
 
 
@@ -252,7 +252,7 @@ def make_no_class_dataset(
             continue
         item = (file, 0)
         instances.append(item)
-    instances.sort(key=natsort_keygen)
+    instances.sort(key=natsort_keygen())
     return instances
 
 
