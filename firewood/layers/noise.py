@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional, Tuple, Type, Union
+from typing import Any, Callable, Dict, Optional, Tuple, Type, Union
 
 import torch
 import torch.nn as nn
@@ -113,7 +113,7 @@ def _onnx_support_normal(
     mean: float = 0.0,
     stddev: float = 1.0,
     seed: int = 0,
-) -> None:
+) -> Callable[..., Tensor]:
     """
     Implementation for onnx support.
 
@@ -128,6 +128,7 @@ def _onnx_support_normal(
 
     class Normal(torch.autograd.Function):
         @staticmethod
+        # type: ignore[override]
         def forward(ctx: Any) -> Tensor:
             noise = torch.normal(mean=mean, std=stddev, size=shape)
             return noise
@@ -137,13 +138,19 @@ def _onnx_support_normal(
             """
             After export, noise becomes a constant in onnx graph
             """
-            g_mean = g.op("Constant", value_t=torch.tensor(mean))
-            g_stddev = g.op("Constant", value_t=torch.tensor(stddev))
-            noise = g.op("RandomNormal", shape_i=shape, seed_f=seed)
-            moved_noise = g.op("Add", g.op("Mul", noise, g_stddev), g_mean)
-            return moved_noise
+            noise = g.op("RandomNormal", shape_i=shape, seed_f=seed)  # type: ignore
+            if stddev != 1.0:
+                stddev = torch.tensor(stddev, dtype=torch.float32)
+                g_stddev = g.op("Constant", value_t=stddev)  # type: ignore
+                noise = g.op("Mul", noise, g_stddev)  # type: ignore
+            if mean != 0.0:
+                mean = torch.tensor(mean, dtype=torch.float32)
+                g_mean = g.op("Constant", value_t=mean)  # type: ignore
+                noise = g.op("Add", noise, g_mean)  # type: ignore
+            return noise
 
         @staticmethod
+        # type: ignore[override]
         def backward(ctx: Any, grad_output: Tensor) -> Tensor:
             return grad_output
 
