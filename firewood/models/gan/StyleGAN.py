@@ -101,6 +101,9 @@ class MappingNetwork(nn.Module):
         return output
 
 
+# ------------------------------------------------------------------------------
+
+
 class InitialBlock(nn.Module):
     def __init__(
         self,
@@ -202,15 +205,15 @@ class SynthesisNetwork(nn.Module):
         self,
         style_dim: int = 512,
         image_channels: int = 3,
+        resolution: int = 1024,
         max_channels: int = 512,
         channels_decay: float = 1.0,
-        resolution: INT = 1024,
         initial_input_type: str = "constant",
         activation: str = "lrelu",
         noise: Optional[str] = "normal",
         fir: NUMBER = [1, 2, 1],
         lr_equalization: bool = True,
-        lr_multiplier: float = 0.01,
+        lr_multiplier: float = 1.0,
     ) -> None:
         super().__init__()
         self.style_dim = style_dim
@@ -234,7 +237,11 @@ class SynthesisNetwork(nn.Module):
         for i in range(self.n_layers):
             resolution = 2 ** (i + 2)
             if i == 0:
-                in_channels = self.get_channels(self.initial_resolution)
+                in_channels = _get_channels(
+                    resolution=self.initial_resolution,
+                    max=self.max_channels,
+                    decay=self.channels_decay,
+                )
                 out_channels = in_channels
                 self.layers["initial"] = self._get_initial_block(in_channels)
                 block = layers.Conv2dBlock(
@@ -249,7 +256,11 @@ class SynthesisNetwork(nn.Module):
                 self.layers[str(resolution)] = block
             else:
                 in_channels = out_channels
-                out_channels = self.get_channels(resolution)
+                out_channels = _get_channels(
+                    resolution=resolution,
+                    max=self.max_channels,
+                    decay=self.channels_decay,
+                )
                 self.layers[str(resolution)] = UpConvConvBlock(
                     style_dim,
                     in_channels,
@@ -273,7 +284,10 @@ class SynthesisNetwork(nn.Module):
         resolution: Optional[int] = None,
     ) -> Tensor:
         """
-        input: style vector (w)
+        Args:
+            input: style vector (w)
+            alpha: interpolation factor of progressive growing
+            resolution: resolution of output image
         """
         if resolution is None:
             resolution = self.resolution
@@ -309,12 +323,6 @@ class SynthesisNetwork(nn.Module):
             images.append(self.to_images[name](output))
         return tuple(images)
 
-    def get_channels(self, resolution: int) -> int:
-        return min(
-            self.max_channels,
-            int(2 ** (14 - math.log2(resolution) * self.channels_decay)),
-        )
-
     def _check_resolution(self, resolution: int) -> int:
         if resolution < self.initial_resolution:
             raise ValueError(
@@ -341,6 +349,166 @@ class SynthesisNetwork(nn.Module):
             f"`initial_input_type`. Received {self.initial_input_type}"
         )
 
+    def reduce_model_for_inference(self) -> None:
+        """
+        Remove all `to_images` except the last one.
+        If only using model for inference, such as ONNX, this method is useful
+        to reduce the model size.
+        After removing, the model cannot generate images of lower resolutions.
+        """
+        for name in self.to_images.keys():
+            if name != str(self.resolution):
+                del self.to_images[name]
+
+
+# ------------------------------------------------------------------------------
+
+
+class ConvConvDownBlock(nn.Module):
+    def __init__(
+        self,
+        in_channels: int,
+        out_channels: int,
+        kernel_size: int = 3,
+        stride: int = 1,
+        padding: Union[str, int] = "same",
+        bias: bool = True,
+        activation: str = "lrelu",
+        fir: NUMBER = [1, 2, 1],
+        down: int = 2,
+    ) -> None:
+        super().__init__()
+        kwargs = dict(
+            kernel_size=kernel_size,
+            stride=stride,
+            padding=padding,
+            bias=bias,
+            activation=activation,
+        )
+        self.conv_1 = layers.Conv2dBlock(in_channels, in_channels, **kwargs)
+        self.conv_2 = layers.Conv2dBlock(
+            in_channels,
+            out_channels,
+            fir=fir,
+            fir_args=dict(down=down),
+            **kwargs,
+        )
+
+    def forward(self, input: Tensor) -> Tensor:
+        output = self.conv_1(input)
+        output = self.conv_2(output)
+        return output
+
+
+class Discriminator(nn.Module):
+    def __init__(
+        self,
+        label_dim: int = 0,
+        image_channels: int = 3,
+        resolution: int = 1024,
+        max_channels: int = 512,
+        channels_decay: float = 1.0,
+        activation: str = "lrelu",
+        fir: NUMBER = [1, 2, 1],
+        mbstd_group: int = 4,
+        lr_equalization: bool = True,
+        lr_multiplier: float = 1.0,
+    ) -> None:
+        super().__init__()
+        self.image_channels = image_channels
+        self.resolution = resolution
+        self.max_channels = max_channels
+        self.channels_decay = channels_decay
+        self.n_layers = int(math.log2(resolution)) - 1
+
+        self.layers = nn.ModuleDict()
+        self.from_images = nn.ModuleDict()
+        kwargs = dict(bias=True, activation=activation)
+        for i in range(self.n_layers - 1, -1, -1):
+            resolution = 2 ** (i + 2)
+
+            out_channels = _get_channels(
+                resolution, max_channels, channels_decay
+            )
+            self.from_images[str(resolution)] = layers.Conv2dBlock(
+                self.image_channels, out_channels, 1, 1, 0, **kwargs
+            )
+
+            in_channels = out_channels
+            out_channels = _get_channels(
+                resolution // 2, max_channels, channels_decay
+            )
+            if i > 0:
+                self.layers[str(resolution)] = ConvConvDownBlock(
+                    in_channels,
+                    out_channels,
+                    fir=fir,
+                    down=2,
+                    **kwargs,
+                )
+            else:  # last layer
+                in_features = out_channels * resolution**2
+                out_features = _get_channels(
+                    resolution // 4, max_channels, channels_decay
+                )
+                sequential = []
+                if mbstd_group > 1:
+                    in_channels += 1
+                    sequential.append(
+                        layers.MinibatchStd(size=mbstd_group, concat=True)
+                    )
+                sequential.extend(
+                    [
+                        layers.Conv2dBlock(
+                            in_channels, out_channels, 3, 1, 1, **kwargs
+                        ),
+                        layers.LinearBlock(in_features, out_features, **kwargs),
+                        layers.Linear(
+                            out_features, max(1, label_dim), bias=True
+                        ),
+                    ]
+                )
+                self.layers[str(resolution)] = nn.Sequential(*sequential)
+
+    def forward(
+        self,
+        input: Tensor,
+        label: Optional[Tensor] = None,
+        alpha: float = 1.0,
+        resolution: Optional[int] = None,
+    ) -> Tensor:
+        """
+        Args:
+            input: (batch_size, image_channels, resolution, resolution)
+            alpha: interpolation factor of progressive growing
+            resolution: resolution of output image
+        """
+        if resolution is None:
+            resolution = self.resolution
+
+        if resolution > 4:
+            downsampled_input = utils.image.nearest_downsample(input, 2)
+            lower_output = self.from_images[str(resolution // 2)](
+                downsampled_input
+            )
+
+        output: Tensor = self.from_images[str(resolution)](input)
+        for i in range(int(math.log2(resolution)) - 2, -1, -1):
+            current_resolution = 2 ** (i + 2)
+            output = self.layers[str(current_resolution)](output)
+            if current_resolution == resolution and 0.0 <= alpha < 1.0:
+                output = (1.0 - alpha) * lower_output + alpha * output
+        if label is not None:
+            output = (output * label).sum(dim=1, keepdim=True)
+        return output
+
+
+def _get_channels(resolution: int, max: int = 512, decay: float = 1.0) -> int:
+    return min(
+        max,
+        int(2 ** (14 - math.log2(resolution) * decay)),
+    )
+
 
 def main() -> None:
     import pytorch_lightning as pl
@@ -355,7 +523,7 @@ def main() -> None:
             self,
             latent_dim: int = 512,
             style_dim: int = 512,
-            label_dim: int = 0,
+            label_dim: int = 8,
             resolution: int = 1024,
         ) -> None:
             super().__init__()
@@ -370,6 +538,10 @@ def main() -> None:
                 style_dim=style_dim,
                 resolution=resolution,
             )
+            self.discriminator = Discriminator(
+                label_dim=label_dim,
+                resolution=resolution,
+            )
             self.example_input_array = (torch.empty(2, latent_dim),)
             if label_dim:
                 self.example_input_array += (torch.empty(2, label_dim),)
@@ -378,7 +550,11 @@ def main() -> None:
             style_vector: Tensor = self.mapping(input, label)
             alpha_test = self.synthesis(style_vector, alpha=0.5)
             images = self.synthesis.generate_all_resolution(style_vector)
-            return images
+            for image in reversed(images[1:]):
+                score = self.discriminator(
+                    image, alpha=0.5, resolution=image.size(-1), label=label
+                )
+            return score
 
     summary = Summary()
     print(summary)

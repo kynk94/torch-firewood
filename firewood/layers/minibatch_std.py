@@ -62,3 +62,13 @@ class MinibatchStd(nn.Module):
         grouped_input = input.view(size, -1, C, *S)
         variance = grouped_input.var(0, unbiased=False, keepdim=False)
         return variance.add(self.eps).sqrt()
+
+    def extra_repr(self) -> str:
+        return ", ".join(
+            [
+                f"size={self.size}",
+                f"averaging={self.averaging}",
+                f"concat={self.concat}",
+                f"eps={self.eps}",
+            ]
+        )
