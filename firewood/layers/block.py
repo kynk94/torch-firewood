@@ -126,16 +126,14 @@ class Block(nn.Module):
         self.lr_equalization_args = lr_equalization_args or dict()
         self.lr_equalization = lr_equalization
 
-    def forward(
-        self, input: Tensor, external_input: Optional[Tensor] = None
-    ) -> Tensor:
+    def forward(self, input: Tensor, *extra_inputs: Any) -> Tensor:
         output = input
-        for name, layer in self.layers.items():
-            if getattr(layer, "use_external_input", False):
-                if getattr(layer, "use_external_output", False):
-                    output, external_input = layer(output, external_input)
+        for layer in self.layers.values():
+            if getattr(layer, "use_extra_inputs", False):
+                if getattr(layer, "use_extra_outputs", False):
+                    output, *extra_inputs = layer(output, *extra_inputs)
                 else:
-                    output = layer(output, external_input)
+                    output = layer(output, *extra_inputs)
             else:
                 output = layer(output)
         return output

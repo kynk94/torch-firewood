@@ -89,7 +89,7 @@ class WeightDeNorm:
     ) -> "WeightDeNorm":
         fn = WeightDeNorm(name, demodulate, pre_normalize, eps)
         module.register_forward_pre_hook(fn)  # type: ignore
-        setattr(module, "use_external_input", True)
+        setattr(module, "use_extra_inputs", True)
         if hasattr(module, "groups"):
             setattr(module, "groups_orig", module.groups)
 
@@ -118,7 +118,7 @@ class WeightDeNorm:
             utils.popattr(module, self.name, None)
             module.register_parameter(self.name, Parameter(weight.detach()))
         delattr(module, self.param_name)
-        utils.popattr(module, "use_external_input", None)
+        utils.popattr(module, "use_extra_inputs", None)
         if hasattr(module, "groups_orig"):
             setattr(module, "groups", utils.popattr(module, "groups_orig"))
         self.output_hook.remove(module)

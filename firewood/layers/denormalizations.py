@@ -48,7 +48,7 @@ class AdaptiveNorm(DeNorm):
     https://github.com/xunhuang1995/AdaIN-style
     """
 
-    use_external_input = True
+    use_extra_inputs = True
 
     def __init__(
         self,
@@ -150,6 +150,8 @@ class AdaptiveNorm(DeNorm):
 class SpatialAdaptiveNorm(DeNorm):
     """SPADE"""
 
+    use_extra_inputs = True
+
     def __init__(
         self,
         in_channels: int,
@@ -172,7 +174,7 @@ class SpatialAdaptiveNorm(DeNorm):
     def forward(  # type: ignore
         self,
         input: Tensor,
-        external_input: Tensor,
+        modulation_input: Tensor,
         alpha: float = 1.0,
     ):
         # TODO: Implement SPADE.
