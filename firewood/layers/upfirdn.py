@@ -232,7 +232,8 @@ def _parse_padding(rank: int, padding: INT) -> Tuple[int, ...]:
         padding = tuple(padding)
     else:
         raise ValueError(
-            f"Padding must be either integer or iterable of length {rank} or {rank * 2}."
+            f"Padding must be either integer or iterable of length {rank} or "
+            f"{rank * 2}. Received: {padding}"
         )
     return padding
 
