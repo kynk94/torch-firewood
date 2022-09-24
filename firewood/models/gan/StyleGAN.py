@@ -408,9 +408,9 @@ class Discriminator(nn.Module):
         resolution: int = 1024,
         max_channels: int = 512,
         channels_decay: float = 1.0,
+        mbstd_group: int = 4,
         activation: str = "lrelu",
         fir: NUMBER = [1, 2, 1],
-        mbstd_group: int = 4,
         lr_equalization: bool = True,
         lr_multiplier: float = 1.0,
     ) -> None:
@@ -419,6 +419,7 @@ class Discriminator(nn.Module):
         self.resolution = resolution
         self.max_channels = max_channels
         self.channels_decay = channels_decay
+        self.mbstd_group = mbstd_group
         self.n_layers = int(math.log2(resolution)) - 1
 
         self.layers = nn.ModuleDict()
@@ -426,17 +427,18 @@ class Discriminator(nn.Module):
         kwargs = dict(bias=True, activation=activation)
         for i in range(self.n_layers - 1, -1, -1):
             resolution = 2 ** (i + 2)
-
+            if i == self.n_layers - 1:
+                in_channels = _get_channels(
+                    resolution, self.max_channels, self.channels_decay
+                )
+            else:
+                in_channels = out_channels
             out_channels = _get_channels(
-                resolution, max_channels, channels_decay
+                resolution // 2, self.max_channels, self.channels_decay
             )
+
             self.from_images[str(resolution)] = layers.Conv2dBlock(
-                self.image_channels, out_channels, 1, 1, 0, **kwargs
-            )
-
-            in_channels = out_channels
-            out_channels = _get_channels(
-                resolution // 2, max_channels, channels_decay
+                self.image_channels, in_channels, 1, 1, 0, **kwargs
             )
             if i > 0:
                 self.layers[str(resolution)] = ConvConvDownBlock(
@@ -446,29 +448,13 @@ class Discriminator(nn.Module):
                     down=2,
                     **kwargs,
                 )
-            else:  # last layer
-                in_features = out_channels * resolution**2
-                out_features = _get_channels(
-                    resolution // 4, max_channels, channels_decay
+            else:
+                self.layers[str(resolution)] = self._get_last_block(
+                    in_channels, out_channels, resolution
                 )
-                sequential = []
-                if mbstd_group > 1:
-                    in_channels += 1
-                    sequential.append(
-                        layers.MinibatchStd(size=mbstd_group, concat=True)
-                    )
-                sequential.extend(
-                    [
-                        layers.Conv2dBlock(
-                            in_channels, out_channels, 3, 1, 1, **kwargs
-                        ),
-                        layers.LinearBlock(in_features, out_features, **kwargs),
-                        layers.Linear(
-                            out_features, max(1, label_dim), bias=True
-                        ),
-                    ]
-                )
-                self.layers[str(resolution)] = nn.Sequential(*sequential)
+
+        if lr_equalization:
+            hooks.lr_equalizer(self, lr_multiplier=lr_multiplier)
 
     def forward(
         self,
@@ -486,7 +472,9 @@ class Discriminator(nn.Module):
         if resolution is None:
             resolution = self.resolution
 
-        if resolution > 4:
+        if resolution == 4:
+            alpha = 1.0
+        else:
             downsampled_input = utils.image.nearest_downsample(input, 2)
             lower_output = self.from_images[str(resolution // 2)](
                 downsampled_input
@@ -501,6 +489,28 @@ class Discriminator(nn.Module):
         if label is not None:
             output = (output * label).sum(dim=1, keepdim=True)
         return output
+
+    def _get_last_block(
+        self, in_channels: int, out_channels: int, resolution: int = 8
+    ) -> nn.Module:
+        kwargs = dict(bias=True, activation="lrelu")
+        in_features = out_channels * resolution**2
+        out_features = _get_channels(
+            resolution // 4, self.max_channels, self.channels_decay
+        )
+        sequential = []
+        if self.mbstd_group > 1:
+            in_channels += 1
+            sequential.append(layers.MinibatchStd(size=self.mbstd_group))
+        sequential += [
+            layers.Conv2dBlock(in_channels, out_channels, 3, 1, 1, **kwargs),
+            layers.LinearBlock(in_features, out_features, **kwargs),
+            layers.Linear(out_features, 1, bias=kwargs.get("bias", True)),
+        ]
+        return nn.Sequential(*sequential)
+
+
+# ------------------------------------------------------------------------------
 
 
 def _get_channels(resolution: int, max: int = 512, decay: float = 1.0) -> int:
