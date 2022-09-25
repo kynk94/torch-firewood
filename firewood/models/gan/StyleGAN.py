@@ -417,6 +417,7 @@ class Discriminator(nn.Module):
         lr_multiplier: float = 1.0,
     ) -> None:
         super().__init__()
+        self.label_dim = label_dim
         self.image_channels = image_channels
         self.resolution = resolution
         self.max_channels = max_channels
@@ -469,7 +470,9 @@ class Discriminator(nn.Module):
                 self.layers["last"] = nn.Sequential(
                     layers.LinearBlock(in_features, out_features, **kwargs),
                     layers.Linear(
-                        out_features, 1, bias=kwargs.get("bias", True)
+                        in_features=out_features,
+                        out_features=max(self.label_dim, 1),
+                        bias=kwargs.get("bias", True),
                     ),
                 )
 
