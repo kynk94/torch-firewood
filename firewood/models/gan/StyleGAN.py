@@ -449,8 +449,26 @@ class Discriminator(nn.Module):
                     **kwargs,
                 )
             else:
-                self.layers[str(resolution)] = self._get_last_block(
-                    in_channels, out_channels, resolution
+                if self.mbstd_group > 1:
+                    in_channels += 1
+                    mbstd = layers.MinibatchStd(size=self.mbstd_group)
+                block = layers.Conv2dBlock(
+                    in_channels, out_channels, 3, 1, 1, **kwargs
+                )
+                if self.mbstd_group > 1:
+                    self.layers[str(resolution)] = nn.Sequential(mbstd, block)
+                else:
+                    self.layers[str(resolution)] = block
+
+                in_features = out_channels * resolution**2
+                out_features = _get_channels(
+                    resolution // 4, self.max_channels, self.channels_decay
+                )
+                self.layers["last"] = nn.Sequential(
+                    layers.LinearBlock(in_features, out_features, **kwargs),
+                    layers.Linear(
+                        out_features, 1, bias=kwargs.get("bias", True)
+                    ),
                 )
 
         if lr_equalization:
@@ -461,23 +479,18 @@ class Discriminator(nn.Module):
         input: Tensor,
         label: Optional[Tensor] = None,
         alpha: float = 1.0,
-        resolution: Optional[int] = None,
     ) -> Tensor:
         """
         Args:
             input: (batch_size, image_channels, resolution, resolution)
             alpha: interpolation factor of progressive growing
-            resolution: resolution of output image
         """
-        if resolution is None:
-            resolution = self.resolution
-
+        resolution = input.size(-1)
         if resolution == 4:
             alpha = 1.0
         else:
-            downsampled_input = utils.image.nearest_downsample(input, 2)
             lower_output = self.from_images[str(resolution // 2)](
-                downsampled_input
+                utils.image.nearest_downsample(input, 2)
             )
 
         output: Tensor = self.from_images[str(resolution)](input)
@@ -486,28 +499,10 @@ class Discriminator(nn.Module):
             output = self.layers[str(current_resolution)](output)
             if current_resolution == resolution and 0.0 <= alpha < 1.0:
                 output = (1.0 - alpha) * lower_output + alpha * output
+        output = self.layers["last"](output)
         if label is not None:
             output = (output * label).sum(dim=1, keepdim=True)
         return output
-
-    def _get_last_block(
-        self, in_channels: int, out_channels: int, resolution: int = 8
-    ) -> nn.Module:
-        kwargs = dict(bias=True, activation="lrelu")
-        in_features = out_channels * resolution**2
-        out_features = _get_channels(
-            resolution // 4, self.max_channels, self.channels_decay
-        )
-        sequential = []
-        if self.mbstd_group > 1:
-            in_channels += 1
-            sequential.append(layers.MinibatchStd(size=self.mbstd_group))
-        sequential += [
-            layers.Conv2dBlock(in_channels, out_channels, 3, 1, 1, **kwargs),
-            layers.LinearBlock(in_features, out_features, **kwargs),
-            layers.Linear(out_features, 1, bias=kwargs.get("bias", True)),
-        ]
-        return nn.Sequential(*sequential)
 
 
 # ------------------------------------------------------------------------------
@@ -551,6 +546,7 @@ def main() -> None:
             self.discriminator = Discriminator(
                 label_dim=label_dim,
                 resolution=resolution,
+                mbstd_group=4,
             )
             self.example_input_array = (torch.empty(2, latent_dim),)
             if label_dim:
@@ -560,10 +556,8 @@ def main() -> None:
             style_vector: Tensor = self.mapping(input, label)
             alpha_test = self.synthesis(style_vector, alpha=0.5)
             images = self.synthesis.generate_all_resolution(style_vector)
-            for image in reversed(images[1:]):
-                score = self.discriminator(
-                    image, alpha=0.5, resolution=image.size(-1), label=label
-                )
+            for image in reversed(images):
+                score = self.discriminator(image, label=label)
             return score
 
     summary = Summary()
