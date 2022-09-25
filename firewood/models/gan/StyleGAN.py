@@ -401,6 +401,8 @@ class ConvConvDownBlock(nn.Module):
 
 
 class Discriminator(nn.Module):
+    last_resolution = 4
+
     def __init__(
         self,
         label_dim: int = 0,
@@ -486,18 +488,18 @@ class Discriminator(nn.Module):
             alpha: interpolation factor of progressive growing
         """
         resolution = input.size(-1)
-        if resolution == 4:
-            alpha = 1.0
-        else:
-            lower_output = self.from_images[str(resolution // 2)](
-                utils.image.nearest_downsample(input, 2)
-            )
 
         output: Tensor = self.from_images[str(resolution)](input)
         for i in range(int(math.log2(resolution)) - 2, -1, -1):
             current_resolution = 2 ** (i + 2)
             output = self.layers[str(current_resolution)](output)
-            if current_resolution == resolution and 0.0 <= alpha < 1.0:
+            if (
+                current_resolution == resolution > self.last_resolution
+                and 0.0 <= alpha < 1.0
+            ):
+                lower_output = self.from_images[str(resolution // 2)](
+                    utils.image.nearest_downsample(input, 2)
+                )
                 output = (1.0 - alpha) * lower_output + alpha * output
         output = self.layers["last"](output)
         if label is not None:
