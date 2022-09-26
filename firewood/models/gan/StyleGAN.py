@@ -25,7 +25,7 @@ import torch.nn as nn
 from torch import Tensor
 
 from firewood import hooks, layers, utils
-from firewood.common.types import INT, NUMBER
+from firewood.common.types import NUMBER
 
 
 class MappingNetwork(nn.Module):
@@ -313,7 +313,9 @@ class SynthesisNetwork(nn.Module):
             break
         return output
 
-    def generate_all_resolution(self, input: Tensor) -> Tuple[Tensor, ...]:
+    @torch.no_grad()
+    def inference_all(self, input: Tensor) -> Tuple[Tensor, ...]:
+        self.eval()
         images = []
         for name, layer in self.layers.items():
             if name == "initial":
@@ -321,6 +323,7 @@ class SynthesisNetwork(nn.Module):
                 continue
             output = self.layers[name](output, input)
             images.append(self.to_images[name](output))
+        self.train()
         return tuple(images)
 
     def _check_resolution(self, resolution: int) -> int:
@@ -560,7 +563,7 @@ def main() -> None:
         def forward(self, input: Tensor, label: Optional[Tensor] = None) -> Tensor:  # type: ignore
             style_vector: Tensor = self.mapping(input, label)
             alpha_test = self.synthesis(style_vector, alpha=0.5)
-            images = self.synthesis.generate_all_resolution(style_vector)
+            images = self.synthesis.inference_all(style_vector)
             for image in reversed(images):
                 score = self.discriminator(image, label=label)
             return score
