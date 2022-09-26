@@ -126,16 +126,11 @@ class Block(nn.Module):
         self.lr_equalization_args = lr_equalization_args or dict()
         self.lr_equalization = lr_equalization
 
-    def forward(
-        self, input: Tensor, external_input: Optional[Tensor] = None
-    ) -> Tensor:
+    def forward(self, input: Tensor, *extra_inputs: Any) -> Tensor:
         output = input
-        for name, layer in self.layers.items():
-            if getattr(layer, "use_external_input", False):
-                if getattr(layer, "use_external_output", False):
-                    output, external_input = layer(output, external_input)
-                else:
-                    output = layer(output, external_input)
+        for layer in self.layers.values():
+            if getattr(layer, "use_extra_inputs", False):
+                output = layer(output, *extra_inputs)
             else:
                 output = layer(output)
         return output
@@ -182,6 +177,7 @@ class Block(nn.Module):
         self.__fuse_layers_if_faster()
         self.__unravel_fused_layers_if_faster()
         self.__move_bias_to_optimal_position()
+        self.__check_extra_inputs()
 
     @torch.no_grad()
     def _update_layer_in_order(
@@ -326,6 +322,16 @@ class Block(nn.Module):
         bias_layer = self.layers.get_submodule("add_bias")
         lr_equalizers.transfer_bias_attrs(bias_layer, weight_layer)
         self._update_layer_in_order("add_bias", None)
+
+    def __check_extra_inputs(self) -> None:
+        count_use_extra_inputs = 0
+        for layer in self.layers.values():
+            if getattr(layer, "use_extra_inputs", False):
+                count_use_extra_inputs += 1
+        if count_use_extra_inputs > 1:
+            raise ValueError(
+                "Only one layer can use extra inputs at the same time in Block."
+            )
 
     def extra_repr(self) -> str:
         return ", ".join(

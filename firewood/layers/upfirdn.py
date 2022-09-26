@@ -1,7 +1,7 @@
 import functools
 import math
 import sys
-from typing import Any, Callable, Optional, Tuple, Union, cast
+from typing import Any, Callable, Optional, Tuple, cast
 
 import numpy as np
 import torch
@@ -13,14 +13,14 @@ from torch.nn.modules.utils import _reverse_repeat_tuple
 
 from firewood import utils
 from firewood.common.constant import NULL_TENSOR
-from firewood.common.types import DEVICE, FLOAT, INT
+from firewood.common.types import DEVICE, INT, NUMBER
 from firewood.utils.extensions import CUDAExtension
 from firewood.utils.image import nearest_downsample, upsample
 
 
 def get_upfirdn_layer(
     rank: int,
-    kernel: Optional[Union[INT, FLOAT, np.ndarray, Tensor]] = None,
+    kernel: Optional[NUMBER] = None,
     up: INT = 1,
     down: INT = 1,
     padding: INT = 0,
@@ -70,7 +70,7 @@ class _UpFirDnNd(nn.Module):
     def __init__(
         self,
         rank: int,
-        kernel: Optional[Union[INT, FLOAT, np.ndarray, Tensor]] = None,
+        kernel: Optional[NUMBER] = None,
         up: INT = 1,
         down: INT = 1,
         padding: INT = 0,
@@ -177,7 +177,7 @@ class _UpFirDnNd(nn.Module):
 
 def _setup_kernel(
     rank: int,
-    kernel: Union[INT, FLOAT, np.ndarray, Tensor] = None,
+    kernel: NUMBER = None,
     gain: float = 1.0,
     normalize_kernel: bool = True,
     flip_kernel: bool = False,
@@ -232,7 +232,8 @@ def _parse_padding(rank: int, padding: INT) -> Tuple[int, ...]:
         padding = tuple(padding)
     else:
         raise ValueError(
-            f"Padding must be either integer or iterable of length {rank} or {rank * 2}."
+            f"Padding must be either integer or iterable of length {rank} or "
+            f"{rank * 2}. Received: {padding}"
         )
     return padding
 
@@ -446,7 +447,7 @@ def load_cuda_upfirdn2d(
 class UpFirDn1d(_UpFirDnNd):
     def __init__(
         self,
-        kernel: Optional[Union[INT, FLOAT, np.ndarray, Tensor]] = None,
+        kernel: Optional[NUMBER] = None,
         up: INT = 1,
         down: INT = 1,
         padding: INT = 0,
@@ -471,7 +472,7 @@ class UpFirDn1d(_UpFirDnNd):
 class UpFirDn2d(_UpFirDnNd):
     def __init__(
         self,
-        kernel: Optional[Union[INT, FLOAT, np.ndarray, Tensor]] = None,
+        kernel: Optional[NUMBER] = None,
         up: INT = 1,
         down: INT = 1,
         padding: INT = 0,
@@ -496,7 +497,7 @@ class UpFirDn2d(_UpFirDnNd):
 class UpFirDn3d(_UpFirDnNd):
     def __init__(
         self,
-        kernel: Optional[Union[INT, FLOAT, np.ndarray, Tensor]] = None,
+        kernel: Optional[NUMBER] = None,
         up: INT = 1,
         down: INT = 1,
         padding: INT = 0,
