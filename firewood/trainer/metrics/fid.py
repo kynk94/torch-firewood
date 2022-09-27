@@ -85,7 +85,6 @@ class FrechetInceptionDistance(FID):
         raise ValueError(f"Not supported resize library: {self.resize_lib}")
 
     @torch.no_grad()
-    # type: ignore[override]
     def update(
         self,
         images: Tensor,

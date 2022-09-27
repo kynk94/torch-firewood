@@ -34,7 +34,7 @@ class StateDictManager(MutableMapping):
         del self._state_dict[key]
         del self._devices[key]
 
-    def __iter__(self) -> Iterable[Tuple[str, Tensor]]:
+    def __iter__(self) -> Iterable[str]:  # type: ignore
         return iter(self._state_dict)
 
     def __len__(self) -> int:

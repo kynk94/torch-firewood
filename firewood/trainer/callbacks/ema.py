@@ -1,4 +1,4 @@
-from typing import Any, Dict, Optional
+from typing import Any, Dict, Optional, Sequence
 
 import torch
 from pytorch_lightning import Callback, LightningModule, Trainer
@@ -28,6 +28,8 @@ class ExponentialMovingAverage(Callback):
         self.decay = decay
         if isinstance(target_modules, str):
             target_modules = (target_modules,)
+        elif isinstance(target_modules, Sequence):
+            target_modules = tuple(target_modules)
         self.target_modules = target_modules
 
         self.original = StateDictManager()
@@ -84,7 +86,7 @@ class ExponentialMovingAverage(Callback):
 
         pl_module.load_state_dict(self.original, strict=False)
 
-    def state_dict(self) -> None:
+    def state_dict(self) -> Dict[str, Tensor]:
         return self.shadow
 
     def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
