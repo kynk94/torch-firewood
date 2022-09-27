@@ -116,6 +116,12 @@ def unsqueeze_view(tensor: Tensor, dim: int, times: int) -> Tensor:
     return tensor.view(tensor.shape[:dim] + (1,) * times + tensor.shape[dim:])
 
 
+def clone_to_cpu_tensor(tensor: Tensor) -> Tensor:
+    if tensor.device.type == "cpu":
+        return tensor.clone()
+    return tensor.detach().cpu()
+
+
 def _single_padding(
     obj: Union[SAME_PADDING, INT]
 ) -> Union[SAME_PADDING, Tuple[int]]:
