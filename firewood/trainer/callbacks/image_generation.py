@@ -81,10 +81,9 @@ class LatentImageSampler(_ImageCallback):
         self,
         trainer: Trainer,
         pl_module: LightningModule,
-        outputs: Optional[STEP_OUTPUT],
+        outputs: STEP_OUTPUT,
         batch: Any,
         batch_idx: int,
-        unused: Optional[int] = 0,
     ) -> None:
         if self.step is None:
             return
@@ -203,10 +202,9 @@ class ConditionImageSampler(_ImageCallback):
         self,
         trainer: Trainer,
         pl_module: LightningModule,
-        outputs: Optional[STEP_OUTPUT],
+        outputs: STEP_OUTPUT,
         batch: Any,
         batch_idx: int,
-        unused: Optional[int] = 0,
     ) -> None:
         if self.step is None:
             return
@@ -338,10 +336,9 @@ class I2ISampler(_ImageCallback):
         self,
         trainer: Trainer,
         pl_module: LightningModule,
-        outputs: Optional[STEP_OUTPUT],
+        outputs: STEP_OUTPUT,
         batch: Any,
         batch_idx: int,
-        unused: Optional[int] = 0,
     ) -> None:
         if self.step is None:
             return
