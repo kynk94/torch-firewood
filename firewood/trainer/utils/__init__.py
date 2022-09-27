@@ -1,7 +1,9 @@
 import os
-from typing import Any, Callable, Dict, Optional, Union
+from typing import Callable, Optional, Union
 
 from firewood.utils.common import get_last_file
+
+from .state_dict_manager import StateDictManager, extract_state_dict
 
 
 def find_checkpoint(
@@ -17,18 +19,3 @@ def find_checkpoint(
         checkpoint = path
     print(f"Found checkpoint: {checkpoint}")
     return checkpoint
-
-
-def extract_state_dict(
-    dictionary: Dict[str, Any], key: str, pop_key: bool = True
-) -> Dict[str, Any]:
-    extracted_state_dict = dict()
-    if not key.endswith("."):
-        key += "."
-    for k, v in dictionary.items():
-        if not k.startswith(key):
-            continue
-        if pop_key:
-            k = k[len(key) :]
-        extracted_state_dict[k] = v
-    return extracted_state_dict

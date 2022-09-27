@@ -1,3 +1,4 @@
+from .ema import ExponentialMovingAverage
 from .image_generation import (
     ConditionImageSampler,
     I2ISampler,
