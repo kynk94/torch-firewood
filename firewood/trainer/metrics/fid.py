@@ -42,10 +42,10 @@ class FrechetInceptionDistance(FID):
         compute_on_cpu: bool = True,
         **kwargs: Any,
     ) -> None:
-        kwargs.update({"compute_on_cpu": compute_on_cpu})
         super().__init__(
             feature=feature,
             reset_real_features=reset_real_features,
+            compute_on_cpu=compute_on_cpu,
             **kwargs,
         )
         self.inception.eval()
@@ -94,8 +94,8 @@ class FrechetInceptionDistance(FID):
     ) -> None:
         """
         images: image tensor with shape (N, C, H, W)
-            if normalize is False, images should be in range of (0, 255).
-            else, images should be in images_range.
+            if normalize is True, images should be in images_range.
+            else, images should be in range of (0, 255).
         """
         if images.size(1) == 1:
             images = images.repeat(1, 3, 1, 1)
