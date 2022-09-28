@@ -204,25 +204,25 @@ class SynthesisNetwork(nn.Module):
     def __init__(
         self,
         style_dim: int = 512,
-        image_channels: int = 3,
-        resolution: int = 1024,
         max_channels: int = 512,
         channels_decay: float = 1.0,
         initial_input_type: str = "constant",
         activation: str = "lrelu",
         noise: Optional[str] = "normal",
         fir: NUMBER = [1, 2, 1],
+        resolution: int = 1024,
+        image_channels: int = 3,
         lr_equalization: bool = True,
         lr_multiplier: float = 1.0,
     ) -> None:
         super().__init__()
         self.style_dim = style_dim
-        self.image_channels = image_channels
         self.max_channels = max_channels
         self.channels_decay = channels_decay
-        self.resolution = self._check_resolution(resolution)
         self.initial_input_type = initial_input_type
-        self.n_layers = int(math.log2(resolution)) - 1
+        self.resolution = self._check_resolution(resolution)
+        self.image_channels = image_channels
+        self.n_layers = int(math.log2(self.resolution)) - 1
 
         self.layers = nn.ModuleDict()
         self.to_images = nn.ModuleDict()
@@ -409,24 +409,24 @@ class Discriminator(nn.Module):
     def __init__(
         self,
         label_dim: int = 0,
-        image_channels: int = 3,
-        resolution: int = 1024,
         max_channels: int = 512,
         channels_decay: float = 1.0,
         mbstd_group: int = 4,
         activation: str = "lrelu",
         fir: NUMBER = [1, 2, 1],
+        resolution: int = 1024,
+        image_channels: int = 3,
         lr_equalization: bool = True,
         lr_multiplier: float = 1.0,
     ) -> None:
         super().__init__()
         self.label_dim = label_dim
-        self.image_channels = image_channels
-        self.resolution = resolution
         self.max_channels = max_channels
         self.channels_decay = channels_decay
         self.mbstd_group = mbstd_group
-        self.n_layers = int(math.log2(resolution)) - 1
+        self.resolution = resolution
+        self.image_channels = image_channels
+        self.n_layers = int(math.log2(self.resolution)) - 1
 
         self.layers = nn.ModuleDict()
         self.from_images = nn.ModuleDict()
