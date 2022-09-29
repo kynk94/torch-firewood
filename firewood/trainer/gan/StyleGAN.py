@@ -1,15 +1,16 @@
 import argparse
 from collections import defaultdict
-from itertools import chain
 from typing import Any, Dict, List, Tuple
 
 import pytorch_lightning as pl
 import torch
+import torchvision.transforms.functional_tensor as TFT
+from pytorch_lightning.callbacks import LearningRateMonitor
 from torch import Tensor
 from torchvision import transforms
 
-from firewood.common.backend import set_runtime_build
-from firewood.common.types import INT, NUMBER
+from firewood.common.backend import set_runtime_build, set_seed
+from firewood.common.types import NUMBER
 from firewood.models.gan.StyleGAN import (
     Discriminator,
     MappingNetwork,
@@ -26,6 +27,7 @@ from firewood.trainer.losses import (
     simple_gradient_penalty,
 )
 from firewood.trainer.metrics import FrechetInceptionDistance
+from firewood.trainer.schedulers import ProgressiveScheduler
 from firewood.trainer.utils import find_checkpoint
 from firewood.utils.data import (
     NoClassImageFolder,
@@ -47,7 +49,8 @@ class StyleGAN(pl.LightningModule):
         noise: str = "normal",
         fir: NUMBER = [1, 2, 1],
         mbstd_group: int = 4,
-        resolution: INT = 1024,
+        resolution: int = 1024,
+        initial_resolution: int = 4,
         image_channels: int = 3,
         lr_equalization: bool = True,
         learning_rate: float = 2e-4,
@@ -56,6 +59,7 @@ class StyleGAN(pl.LightningModule):
     ):
         super().__init__()
         self.save_hyperparameters()
+        self.current_resolution = initial_resolution
         self.mapping = MappingNetwork(
             latent_dim=latent_dim,
             label_dim=label_dim,
@@ -91,27 +95,32 @@ class StyleGAN(pl.LightningModule):
         # metrics
         self.fid = FrechetInceptionDistance()
 
-    def forward(self, input: Tensor) -> Tensor:
-        return self.synthesis(input)
+    def forward(self, input: Tensor, resolution: int = 1024) -> Tensor:
+        return self.synthesis(input, resolution=resolution)
 
     def generate_latent(self, batch_size: int) -> Tensor:
         return torch.randn(
             size=(batch_size, self.hparams.latent_dim), device=self.device
         )
 
-    def generator_step(self, input: Tensor) -> Dict[str, Tensor]:
+    def generator_step(
+        self, input: Tensor, alpha: float = 1.0, resolution: int = 1024
+    ) -> Dict[str, Tensor]:
         latent = self.generate_latent(input.size(0))
         style: Tensor = self.mapping(latent)
-        generated_image: Tensor = self.synthesis(style)
+        generated_image: Tensor = self.synthesis(style, alpha, resolution)
         score_fake: Tensor = self.discriminator(generated_image)
         loss = logistic_nonsaturating_loss(score_fake, True)
         return {"loss/gen": loss}
 
-    def discriminator_step(self, input: Tensor) -> Dict[str, Tensor]:
-
+    def discriminator_step(
+        self, input: Tensor, alpha: float = 1.0
+    ) -> Dict[str, Tensor]:
+        resolution = input.size(-1)
         latent = self.generate_latent(input.size(0))
         with torch.no_grad():
-            generated_image: Tensor = self.synthesis(latent)
+            style: Tensor = self.mapping(latent)
+            generated_image: Tensor = self.synthesis(style, alpha, resolution)
         score_fake: Tensor = self.discriminator(generated_image)
         score_real: Tensor = self.discriminator(input)
 
@@ -144,11 +153,17 @@ class StyleGAN(pl.LightningModule):
         self, batch: Tensor, batch_idx: int, optimizer_idx: int
     ) -> Tensor:
         real_images, _ = batch
+        total_minibatch_size = real_images.size(0) * self.trainer.num_gpus
+        alpha, resolution = self.lr_schedulers()[0].get_alpha_and_resolution(
+            total_minibatch_size
+        )
+        self.current_resolution = resolution
         if optimizer_idx == 0:
-            log_dict = self.discriminator_step(real_images)
+            real_images = TFT.resize(real_images, resolution, antialias=True)
+            log_dict = self.discriminator_step(real_images, alpha)
             key = "loss/dis"
         else:
-            log_dict = self.generator_step(real_images)
+            log_dict = self.generator_step(real_images, alpha, resolution)
             key = "loss/gen"
         loss = log_dict.pop(key)
         self.log(key, loss, prog_bar=True, on_step=True, on_epoch=True)
@@ -158,10 +173,13 @@ class StyleGAN(pl.LightningModule):
     def validation_step(
         self, batch: Tensor, batch_idx: int
     ) -> Dict[str, Tensor]:
+        resolution = self.current_resolution
         real_images, _ = batch
+        real_images = TFT.resize(real_images, resolution, antialias=True)
 
         latent = self.generate_latent(real_images.size(0))
-        generated_image = self.synthesis(latent)
+        style = self.mapping(latent)
+        generated_image = self.synthesis(style, resolution=resolution)
         score_fake: Tensor = self.discriminator(generated_image)
         score_real: Tensor = self.discriminator(real_images)
 
@@ -206,19 +224,45 @@ class StyleGAN(pl.LightningModule):
 
     def configure_optimizers(self) -> Tuple[Any]:
         lr = self.hparams.learning_rate
-        generator_parameters = chain(
-            self.mapping.parameters(), self.synthesis.parameters()
-        )
         generator_optimizer = torch.optim.Adam(
-            generator_parameters, lr=lr, betas=(0.0, 0.999)
+            self.synthesis.parameters(), lr=lr, betas=(0.0, 0.999)
+        )
+        generator_optimizer.add_param_group(
+            {
+                "params": self.mapping.parameters(),
+                "lr": lr,
+                "betas": (0.0, 0.999),
+            }
         )
         discriminator_optimizer = torch.optim.Adam(
             self.discriminator.parameters(), lr=lr, betas=(0.0, 0.999)
         )
+
+        scheduler_kwargs = dict(
+            dataset_size=self.hparams.dataset_size,
+            initial_resolution=self.hparams.initial_resolution,
+            max_resolution=self.hparams.resolution,
+            lavel_epoch=getattr(self.hparams, "lavel_epoch", 1.0),
+            fade_epoch=getattr(self.hparams, "fade_epoch", 1.0),
+            ramp_up_epoch=getattr(self.hparams, "ramp_up_epoch", 0.0),
+            lr_dict={128: 0.0015, 256: 0.002, 512: 0.003, 1024: 0.003},
+        )
+        generator_scheduler = ProgressiveScheduler(
+            generator_optimizer, **scheduler_kwargs
+        )
+        discriminator_scheduler = ProgressiveScheduler(
+            discriminator_optimizer, **scheduler_kwargs
+        )
         # discriminator first, generator second
         return (
-            {"optimizer": discriminator_optimizer},
-            {"optimizer": generator_optimizer},
+            {
+                "optimizer": discriminator_optimizer,
+                "lr_scheduler": discriminator_scheduler,
+            },
+            {
+                "optimizer": generator_optimizer,
+                "lr_scheduler": generator_scheduler,
+            },
         )
 
 
@@ -234,13 +278,15 @@ def main():
     step_group.add_argument("--epoch", "-e", type=int, default=-1)
     step_group.add_argument("--step", "-s", type=int, default=-1)
     parser.add_argument("--checkpoint", "-ckpt", type=str, default=None)
-    parser.add_argument("--resolution", "-r", type=int, default=112)
-    parser.add_argument("--batch_size", "-b", type=int, default=32)
-    parser.add_argument("--latent_dim", "-l", type=int, default=1024)
-    parser.add_argument("--learning_rate", "-lr", type=float, default=2e-4)
+    parser.add_argument("--resolution", "-r", type=int, default=1024)
+    parser.add_argument("--batch_size", "-b", type=int, default=8)
+    parser.add_argument("--latent_dim", "-l", type=int, default=512)
+    parser.add_argument("--learning_rate", "-lr", type=float, default=1e-3)
     parser.add_argument("--runtime_build", "-rb", action="store_true")
     args = vars(parser.parse_args())
     # fmt: on
+
+    set_seed(0)
 
     if args["runtime_build"]:
         set_runtime_build(True)
@@ -267,9 +313,9 @@ def main():
         datasets=datasets,
         batch_size=args["batch_size"],
         shuffle=True,
-        # when pin_memory=True, data will be pinned to the rank 0 gpu
         pin_memory=False,
     )
+    # TODO: mutable batch size for each resolution
 
     sample_image: Tensor = next(iter(train_dataloader))[0]  # (N, C, H, W)
     channels, resolution = sample_image.shape[1:3]
@@ -292,7 +338,9 @@ def main():
             resolution=1024,
             image_channels=3,
             lr_equalization=True,
-            learning_rate=2e-4,
+            learning_rate=args["learning_rate"],
+            r1_gamma=10.0,
+            r2_gamma=0.0,
         )
 
     callbacks = [
@@ -302,6 +350,7 @@ def main():
         LatentDimInterpolator(
             ndim_to_interpolate=args["latent_dim"] // 10, save_image=True
         ),
+        LearningRateMonitor(),
     ]
     gpus = torch.cuda.device_count()
     trainer = pl.Trainer(
