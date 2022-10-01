@@ -152,41 +152,25 @@ class _ImageCallback(Callback):
             save_tensor_to_image(input, os.path.join(image_dir, basename))
 
     def _set_data_iter(self, trainer: Trainer, stage: str = "train") -> None:
-        datamodule = getattr(trainer, "datamodule", None)
         stage = stage.lower()
+        if stage not in {"train", "test", "val", "validation"}:
+            raise ValueError(f"Invalid stage: {stage}")
+        if stage == "validation":
+            stage = "val"
+        datamodule = getattr(trainer, "datamodule", None)
         if datamodule is not None:
-            if stage.startswith("train"):
-                dataloader: DataLoader = datamodule.train_dataloader
-                self._train_data_iter = iter(dataloader)
-            elif stage.startswith("test"):
-                dataloader = datamodule.test_dataloader
-                self._test_data_iter = iter(dataloader)
-            elif stage.startswith("val"):
-                dataloader = datamodule.val_dataloader
-                self._val_data_iter = iter(dataloader)
-            else:
-                raise ValueError(f"Unknown stage: {stage}")
+            dataloader: DataLoader = getattr(
+                datamodule, f"{stage}_dataloader"
+            )()
+            setattr(self, f"_{stage}_data_iter", iter(dataloader))
             return
-        if stage.startswith("train"):
-            data_source = trainer._data_connector._train_dataloader_source
-            dataloader = cast(DataLoader, data_source.instance)
-            if dataloader is not None:
-                self._train_data_iter = iter(dataloader)
-                return
-        elif stage.startswith("test"):
-            data_source = trainer._data_connector._test_dataloader_source
-            dataloader = cast(DataLoader, data_source.instance)
-            if dataloader is not None:
-                self._test_data_iter = iter(dataloader)
-                return
-        elif stage.startswith("val"):
-            data_source = trainer._data_connector._val_dataloader_source
-            dataloader = cast(DataLoader, data_source.instance)
-            if dataloader is not None:
-                self._val_data_iter = iter(dataloader)
-                return
-        else:
-            raise ValueError(f"Unknown stage: {stage}")
+        data_source = getattr(
+            trainer._data_connector, f"_{stage}_dataloader_source"
+        )
+        dataloader = data_source.dataloader()
+        if dataloader is not None:
+            setattr(self, f"_{stage}_data_iter", iter(dataloader))
+            return
         raise ValueError(
             f"No {stage} dataloader found for {utils.get_name*(trainer)}."
         )

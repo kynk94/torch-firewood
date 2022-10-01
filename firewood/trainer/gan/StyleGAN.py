@@ -150,13 +150,10 @@ class StyleGAN(pl.LightningModule):
         return log_dict
 
     def training_step(
-        self, batch: Tensor, batch_idx: int, optimizer_idx: int
+        self, batch: Tuple[Tensor, ...], batch_idx: int, optimizer_idx: int
     ) -> Tensor:
         real_images, _ = batch
-        total_minibatch_size = real_images.size(0) * self.trainer.num_gpus
-        alpha, resolution = self.lr_schedulers()[0].get_alpha_and_resolution(
-            total_minibatch_size
-        )
+        alpha, resolution = self.update_scheduler(real_images.size(0))
         self.current_resolution = resolution
         if optimizer_idx == 0:
             real_images = TFT.resize(real_images, resolution, antialias=True)
@@ -264,6 +261,13 @@ class StyleGAN(pl.LightningModule):
                 "lr_scheduler": generator_scheduler,
             },
         )
+
+    def update_scheduler(self, batch_size: int) -> Tuple[float, int]:
+        total_minibatch_size = self.trainer.num_gpus * batch_size
+        g_scheduler, d_scheduler = self.lr_schedulers()
+        g_scheduler.update(total_minibatch_size)
+        d_scheduler.update(total_minibatch_size)
+        return g_scheduler.alpha, g_scheduler.resolution
 
 
 def main():
