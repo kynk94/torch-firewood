@@ -48,8 +48,9 @@ class ProgressiveScheduler(_LRScheduler):
         self.current_key_images += batch_size
         level_key_images = int(self.dataset_size * self.level_epoch)
         fade_key_images = int(self.dataset_size * self.fade_epoch)
+        phase_key_images = level_key_images + fade_key_images
         phase, current_key_images = divmod(
-            self.current_key_images, level_key_images + fade_key_images
+            self.current_key_images, phase_key_images
         )
         alpha = 1.0
         if current_key_images > level_key_images:
@@ -64,9 +65,8 @@ class ProgressiveScheduler(_LRScheduler):
         self.alpha = alpha
         self.resolution = resolution
 
-        if self.current_key_images + batch_size >= self.dataset_size * (
-            self.level_epoch + self.fade_epoch
-        ):
+        # If next step is next phase, update batch size of dataset
+        if self.current_key_images + batch_size >= phase_key_images:
             self.mod_batch_size_of_dataset()
 
     def mod_lr(self, resolution: int) -> None:
