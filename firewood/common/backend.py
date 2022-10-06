@@ -51,11 +51,11 @@ def set_runtime_build(runtime_build: bool) -> bool:
     return _runtime_build
 
 
-def seed() -> int:
+def seed() -> Optional[int]:
     return _seed
 
 
-def set_seed(seed: int = 0) -> int:
+def set_seed(seed: int) -> int:
     if not isinstance(seed, int):
         raise TypeError("seed must be int")
     global _seed
