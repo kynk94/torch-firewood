@@ -18,8 +18,8 @@ from firewood.trainer.losses import gan_loss
 from firewood.trainer.metrics import FrechetInceptionDistance
 from firewood.utils.data import (
     get_dataloaders,
-    get_train_test_val_datasets,
-    torchvision_train_test_val_datasets,
+    get_train_val_test_datasets,
+    torchvision_train_val_test_datasets,
 )
 
 
@@ -164,14 +164,14 @@ def main():
     )
 
     if args["input"]:
-        datasets = get_train_test_val_datasets(
+        datasets = get_train_val_test_datasets(
             root=args["input"],
             transform=transform,
             loader_mode="L",  # "L" for GrayScale
             split="train/val",
         )
     else:
-        datasets = torchvision_train_test_val_datasets(
+        datasets = torchvision_train_val_test_datasets(
             name=args["dataset"], root="./datasets", transform=transform
         )
     train_dataloader, test_dataloader, val_dataloader = get_dataloaders(

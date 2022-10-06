@@ -21,8 +21,8 @@ from firewood.trainer.utils import find_checkpoint
 from firewood.utils.data import (
     NoClassImageFolder,
     get_dataloaders,
-    get_train_test_val_datasets,
-    torchvision_train_test_val_datasets,
+    get_train_val_test_datasets,
+    torchvision_train_val_test_datasets,
 )
 
 
@@ -188,7 +188,7 @@ def main():
     transform = transforms.Compose(transform)
 
     if args["input"]:
-        datasets = get_train_test_val_datasets(
+        datasets = get_train_val_test_datasets(
             root=args["input"],
             dataset_class=NoClassImageFolder,
             transform=transform,
@@ -196,7 +196,7 @@ def main():
             split="train/val",
         )
     else:
-        datasets = torchvision_train_test_val_datasets(
+        datasets = torchvision_train_val_test_datasets(
             name=args["dataset"], root="./datasets", transform=transform
         )
     train_dataloader, test_dataloader, val_dataloader = get_dataloaders(
