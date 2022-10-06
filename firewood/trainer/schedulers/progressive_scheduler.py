@@ -13,6 +13,7 @@ class ProgressiveScheduler(_LRScheduler):
     """
 
     trainer: Trainer
+    optimizer: Optimizer
 
     def __init__(
         self,
@@ -24,9 +25,9 @@ class ProgressiveScheduler(_LRScheduler):
         fade_epoch: float = 1.0,
         ramp_up_epoch: float = 0.0,
         lr_dict: Dict[int, float] = DEFAULT_LR,
-        last_epoch=-1,
+        last_epoch: int = -1,
     ) -> None:
-        super().__init__(optimizer, last_epoch)
+        super().__init__(optimizer=optimizer, last_epoch=last_epoch)
         self.dataset_size = dataset_size
         self.initial_resolution = initial_resolution
         self.max_resolution = max_resolution
@@ -40,7 +41,7 @@ class ProgressiveScheduler(_LRScheduler):
         self.alpha = 1.0
         self.resolution = initial_resolution
 
-    def update(self, batch_size: int) -> Tuple[float, int]:
+    def update(self, batch_size: int) -> None:
         """
         key_images: new phase            level_epoch                  fade_epoch
         alpha:      1 ----------------- decrease start ----------------------- 0
