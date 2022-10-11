@@ -29,6 +29,14 @@ try:
 except (AttributeError, ImportError, ModuleNotFoundError):
     A = None
 
+try:
+    from pytorch_lightning import LightningDataModule
+except (AttributeError, ImportError, ModuleNotFoundError):
+
+    class LightningDataModule:  # type: ignore
+        pass
+
+
 Image.init()
 
 DATASET = Union[Dataset, Tuple[Dataset, ...], List[Dataset]]
@@ -799,3 +807,70 @@ def get_dataloaders(
         if not shuffle_others:
             shuffle = False
     return tuple(dataloaders)
+
+
+@overload
+def get_datamodule(
+    *,
+    datasets: Optional[DATASET],
+    batch_size: int,
+    num_workers: int,
+) -> LightningDataModule:
+    ...
+
+
+@overload
+def get_datamodule(
+    *datasets: Dataset,
+    batch_size: int,
+    num_workers: int,
+) -> LightningDataModule:
+    ...
+
+
+def get_datamodule(
+    *__datasets: Dataset,
+    datasets: Optional[DATASET] = None,
+    batch_size: int = 32,
+    num_workers: int = 4,
+) -> LightningDataModule:
+    if not hasattr(LightningDataModule, "from_datasets"):
+        raise ImportError(
+            "LightningDataModule is not available. "
+            "Please install PyTorch Lightning by following command: "
+            "pip install pytorch-lightning"
+        )
+    if datasets is None:
+        if not __datasets:
+            raise ValueError("No datasets provided")
+        if len(__datasets) == 1 and isinstance(__datasets[0], (tuple, list)):
+            datasets = __datasets[0]
+        else:
+            datasets = __datasets
+    elif isinstance(datasets, Dataset):
+        datasets = (datasets,)
+    if all(dataset is None for dataset in datasets):
+        raise ValueError("No datasets provided")
+    if len(datasets) == 1:
+        train_dataset = datasets[0]
+        val_dataset = None
+        test_dataset = None
+    elif len(datasets) == 2:
+        train_dataset = datasets[0]
+        val_dataset = datasets[1]
+        test_dataset = None
+    elif len(datasets) == 3:
+        train_dataset = datasets[0]
+        val_dataset = datasets[1]
+        test_dataset = datasets[2]
+    else:
+        raise ValueError("Too many datasets provided")
+
+    return LightningDataModule.from_datasets(
+        train_dataset=train_dataset,
+        val_dataset=val_dataset,
+        test_dataset=test_dataset,
+        batch_size=batch_size,
+        predict_dataset=None,
+        num_workers=num_workers,
+    )
