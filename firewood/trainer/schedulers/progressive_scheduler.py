@@ -4,6 +4,10 @@ from pytorch_lightning import Trainer
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import _LRScheduler
 
+from firewood.trainer.utils.data_manager import (
+    update_train_batch_size_of_trainer,
+)
+
 DEFAULT_LR = {128: 0.0015, 256: 0.002, 512: 0.003, 1024: 0.003}
 
 
@@ -68,7 +72,7 @@ class ProgressiveScheduler(_LRScheduler):
 
         # If next step is next phase, update batch size of dataset
         if self.current_key_images + batch_size >= phase_key_images:
-            self.mod_batch_size_of_dataset()
+            update_train_batch_size_of_trainer(self.trainer, batch_size // 2)
 
     def mod_lr(self, resolution: int) -> None:
         for param_group in self.optimizer.param_groups:
@@ -81,10 +85,3 @@ class ProgressiveScheduler(_LRScheduler):
         ramp_up = min(self.current_key_images / ramp_up_key_images, 1.0)
         for param_group in self.optimizer.param_groups:
             param_group["lr"] *= ramp_up
-
-    def mod_batch_size_of_dataset(self) -> None:
-        trainer: Optional[Trainer] = getattr(self, "trainer", None)
-        if trainer is None:
-            return
-
-        source = trainer._data_connector._train_dataloader_source
