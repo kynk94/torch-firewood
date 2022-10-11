@@ -39,13 +39,11 @@ class FrechetInceptionDistance(FID):
         feature: Union[int, nn.Module] = 2048,
         resize_lib: Union[str, RESIZE_LIB] = RESIZE_LIB.TORCH,
         reset_real_features: bool = True,
-        compute_on_cpu: bool = True,
         **kwargs: Any,
     ) -> None:
         super().__init__(
             feature=feature,
             reset_real_features=reset_real_features,
-            compute_on_cpu=compute_on_cpu,
             **kwargs,
         )
         self.inception.eval()
@@ -107,11 +105,6 @@ class FrechetInceptionDistance(FID):
             images = (images - images_range[0]) / (
                 images_range[1] - images_range[0]
             ) * 255 + 0.5
-        if self.resize_lib != "tf1":
+        if self.resize_lib != RESIZE_LIB.TF:
             images = self.resize(images)
-        features: Tensor = self.inception(images.clamp_(0, 255).byte())
-
-        if is_real:
-            self.real_features.append(features)
-        else:
-            self.fake_features.append(features)
+        super().update(images.clamp_(0, 255).byte(), is_real)
