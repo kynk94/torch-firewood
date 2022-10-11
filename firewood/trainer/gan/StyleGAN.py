@@ -247,9 +247,13 @@ class StyleGAN(pl.LightningModule):
         generator_scheduler = ProgressiveScheduler(
             generator_optimizer, **scheduler_kwargs
         )
+        # Assign trainer to generator_scheduler only.
+        # Because next discriminator step need batch size updated dataloader.
+        generator_scheduler.trainer = self.trainer
         discriminator_scheduler = ProgressiveScheduler(
             discriminator_optimizer, **scheduler_kwargs
         )
+        discriminator_scheduler.trainer = None
         # discriminator first, generator second
         return (
             {

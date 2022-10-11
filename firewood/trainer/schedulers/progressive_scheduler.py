@@ -71,7 +71,10 @@ class ProgressiveScheduler(_LRScheduler):
         self.resolution = resolution
 
         # If next step is next phase, update batch size of dataset
-        if self.current_key_images + batch_size >= phase_key_images:
+        if (
+            getattr(self, "trainer", None) is not None
+            and self.current_key_images + batch_size >= phase_key_images
+        ):
             update_train_batch_size_of_trainer(self.trainer, batch_size // 2)
 
     def mod_lr(self, resolution: int) -> None:
