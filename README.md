@@ -1,7 +1,7 @@
 # Firewood
 
 Implementation of custom torch layers and models.  
-All layers are compatible with official pytorch `nn.Module` and support `ddp` strategy.
+All layers are compatible with official pytorch `nn.Module` and support `ddp` strategy, `onnx` exporting.
 
 ## [Installation](https://github.com/kynk94/torch-firewood/blob/main/INSTALL.md)
 
@@ -29,6 +29,7 @@ All layers are compatible with official pytorch `nn.Module` and support `ddp` st
 * [ ] PGGAN
   [:evergreen_tree:Model](https://github.com/kynk94/torch-firewood/blob/main/firewood/models/gan/PGGAN.py)
 * [ ] StyleGAN
+  [:evergreen_tree:Model](https://github.com/kynk94/torch-firewood/blob/main/firewood/models/gan/StyleGAN.py)
 
 ### Semantic Segmentation
 
@@ -84,7 +85,6 @@ All layers are compatible with official pytorch `nn.Module` and support `ddp` st
   * selectable resizing method
     * default: antialiased torchvision
     * original: tf1
-  * On CPU computable to avoid GPU VRAM overflow error
 
 ## Dataset
 
