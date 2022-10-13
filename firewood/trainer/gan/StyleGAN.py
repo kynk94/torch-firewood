@@ -6,6 +6,7 @@ import pytorch_lightning as pl
 import torch
 import torchvision.transforms.functional_tensor as TFT
 from pytorch_lightning.callbacks import LearningRateMonitor
+from pytorch_lightning.loggers import TensorBoardLogger
 from torch import Tensor
 from torchvision import transforms
 
@@ -254,21 +255,29 @@ class StyleGAN(pl.LightningModule):
         generator_scheduler = ProgressiveScheduler(
             generator_optimizer, **scheduler_kwargs
         )
-        # Assign trainer to generator_scheduler only.
-        # Because next discriminator step need batch size updated dataloader.
-        generator_scheduler.trainer = self.trainer
         discriminator_scheduler = ProgressiveScheduler(
             discriminator_optimizer, **scheduler_kwargs
         )
+        generator_scheduler.trainer = self.trainer
         discriminator_scheduler.trainer = None
         return (
             {
                 "optimizer": generator_optimizer,
-                "lr_scheduler": generator_scheduler,
+                "lr_scheduler": {
+                    "scheduler": generator_scheduler,
+                    "name": "scheduler/gen",
+                    "interval": "step",
+                    "frequency": 1,
+                },
             },
             {
                 "optimizer": discriminator_optimizer,
-                "lr_scheduler": discriminator_scheduler,
+                "lr_scheduler": {
+                    "scheduler": discriminator_scheduler,
+                    "name": "scheduler/dis",
+                    "interval": "step",
+                    "frequency": 1,
+                },
             },
         )
 
@@ -382,6 +391,9 @@ def main():
         check_val_every_n_epoch=5,
         callbacks=callbacks,
         strategy="ddp" if gpus > 1 else None,
+    )
+    trainer.logger = TensorBoardLogger(
+        trainer.default_root_dir, default_hp_metric=False
     )
     trainer.fit(
         model,
