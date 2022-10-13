@@ -1,6 +1,14 @@
+import os
+import random
+from typing import Optional
+
+import numpy as np
+import torch
+
 _lr_equalization = False
 _weight_gradients_disabled = False
 _runtime_build = False
+_seed: Optional[int] = None
 
 
 def lr_equalization() -> bool:
@@ -41,3 +49,22 @@ def set_runtime_build(runtime_build: bool) -> bool:
     global _runtime_build
     _runtime_build = runtime_build
     return _runtime_build
+
+
+def seed() -> Optional[int]:
+    return _seed
+
+
+def set_seed(seed: int) -> int:
+    if not isinstance(seed, int):
+        raise TypeError("seed must be int")
+    global _seed
+    _seed = seed
+
+    os.environ["PYTHONHASHSEED"] = str(seed)
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+    return _seed

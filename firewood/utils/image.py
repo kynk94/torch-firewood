@@ -181,12 +181,14 @@ def image_auto_permute(
         raise ValueError(f"Invalid target_format: {target_format}")
     sizes = []
     possible_channel_dims = []
+    possible_alpha_channel_dims = []
     for dim in range(tensor.ndim - 3, tensor.ndim):
         size = tensor.size(dim)
         sizes.append(size)
-        if size in {1, 3, 4}:
+        if size in {1, 3}:
             possible_channel_dims.append(dim)
-
+        elif size == 4:
+            possible_alpha_channel_dims.append(dim)
     if sizes[0] == sizes[1] == sizes[2] and ignore_error:
         return tensor
     if sizes[0] == sizes[1] and sizes[1] != sizes[2]:
@@ -196,6 +198,8 @@ def image_auto_permute(
     # all sizes are different in the case below
     elif len(possible_channel_dims) == 1:
         C = possible_channel_dims[0]
+    elif len(possible_alpha_channel_dims) == 1:
+        C = possible_alpha_channel_dims[0]
     elif ignore_error:
         return tensor
     else:

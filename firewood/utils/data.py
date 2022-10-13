@@ -29,6 +29,14 @@ try:
 except (AttributeError, ImportError, ModuleNotFoundError):
     A = None
 
+try:
+    from pytorch_lightning import LightningDataModule
+except (AttributeError, ImportError, ModuleNotFoundError):
+
+    class LightningDataModule:  # type: ignore
+        pass
+
+
 Image.init()
 
 DATASET = Union[Dataset, Tuple[Dataset, ...], List[Dataset]]
@@ -478,7 +486,7 @@ class PairedImageFolder(NoClassImageFolder):
         return source, target
 
 
-def get_train_test_val_dir(
+def _get_train_val_test_dir(
     path: str,
 ) -> Tuple[str, Optional[str], Optional[str]]:
     if not os.path.exists(path):
@@ -488,18 +496,19 @@ def get_train_test_val_dir(
     if not os.path.exists(train_dir):
         return path, None, None
 
-    if os.path.exists(os.path.join(path, "test")):
-        test_dir = os.path.join(path, "test")
-    else:
-        test_dir = None
     if os.path.exists(os.path.join(path, "val")):
         val_dir = os.path.join(path, "val")
     else:
         val_dir = None
-    return train_dir, test_dir, val_dir
+
+    if os.path.exists(os.path.join(path, "test")):
+        test_dir = os.path.join(path, "test")
+    else:
+        test_dir = None
+    return train_dir, val_dir, test_dir
 
 
-def get_train_test_val_datasets(
+def get_train_val_test_datasets(
     root: str,
     dataset_class: VisionDataset = ImageFolder,
     transform: Optional[Callable] = None,
@@ -510,7 +519,7 @@ def get_train_test_val_datasets(
     split: Optional[SPLIT] = None,
     **kwargs: Any,
 ) -> Tuple[Dataset, Optional[Dataset], Optional[Dataset]]:
-    train_dir, test_dir, val_dir = get_train_test_val_dir(root)
+    train_dir, val_dir, test_dir = _get_train_val_test_dir(root)
 
     if loader is not None and loader_mode != "RGB":
         raise ValueError("loader_mode is not supported when loader is not None")
@@ -524,17 +533,6 @@ def get_train_test_val_datasets(
         is_valid_file=is_valid_file,
         **kwargs,
     )
-    if test_dir:
-        test_dataset = dataset_class(
-            root=test_dir,
-            transform=transform,
-            target_transform=target_transform,
-            loader=loader,
-            is_valid_file=is_valid_file,
-            **kwargs,
-        )
-    else:
-        test_dataset = None
     if val_dir:
         val_dataset = dataset_class(
             root=val_dir,
@@ -546,26 +544,37 @@ def get_train_test_val_datasets(
         )
     else:
         val_dataset = None
+    if test_dir:
+        test_dataset = dataset_class(
+            root=test_dir,
+            transform=transform,
+            target_transform=target_transform,
+            loader=loader,
+            is_valid_file=is_valid_file,
+            **kwargs,
+        )
+    else:
+        test_dataset = None
 
-    datasets = (train_dataset, test_dataset, val_dataset)
+    datasets = (train_dataset, val_dataset, test_dataset)
     if split is None:
         return datasets
     if isinstance(split, str):
         split = split.strip().lower()  # type: ignore
         if (
-            (split == "auto" or ("test" in split and "val" in split))
-            and test_dataset is not None
+            (split == "auto" or ("val" in split and "test" in split))
             and val_dataset is not None
+            and test_dataset is not None
         ):
             return datasets
-        if "test" in split and test_dataset is not None:
-            if val_dataset is not None:
-                test_dataset = ConcatDataset([test_dataset, val_dataset])
-            return train_dataset, test_dataset, None
         if "val" in split and val_dataset is not None:
             if test_dataset is not None:
-                val_dataset = ConcatDataset([test_dataset, val_dataset])
-            return train_dataset, None, val_dataset
+                val_dataset = ConcatDataset([val_dataset, test_dataset])
+            return train_dataset, val_dataset, None
+        if "test" in split and test_dataset is not None:
+            if val_dataset is not None:
+                test_dataset = ConcatDataset([val_dataset, test_dataset])
+            return train_dataset, None, test_dataset
     return concat_and_split_datasets(
         datasets=datasets, split=split, shuffle=False
     )
@@ -576,24 +585,35 @@ def concat_and_split_datasets(
     split: SPLIT = "auto",
     shuffle: bool = False,
 ) -> Tuple[Dataset, Optional[Dataset], Optional[Dataset]]:
+    """
+    Concatenate datasets and split them into train, val, and test datasets.
+
+    Args:
+        datasets: A tuple of datasets to concatenate.
+        split: A tuple of floats or a string. If a tuple of floats, the sum of
+            the floats must be 1.0. If a string, it must be one of the following
+            values: "auto" or permutation of "train", "val", and "test".
+            If "auto", the split will be (0.8, 0.1, 0.1).
+        shuffle: Whether to shuffle the dataset before splitting.
+    """
     # Concatenate datasets
     if isinstance(datasets, (list, tuple)):
         datasets = tuple(dataset for dataset in datasets if dataset is not None)
         if len(datasets) == 0:
-            raise ValueError("datasets must not be empty")
+            raise ValueError("`datasets` must not be empty")
         elif len(datasets) == 1:
             datasets = datasets[0]
         else:
             datasets = ConcatDataset(datasets)
 
-    # Split concatenated dataset to train, test, val datasets
+    # Split concatenated dataset to train, val, test datasets
     if isinstance(split, str):
         split = split.strip().lower()  # type: ignore
-        if split == "auto" or ("test" in split and "val" in split):
+        if split == "auto" or ("val" in split and "test" in split):
             split = (0.8, 0.1, 0.1)
-        elif "test" in split:
-            split = (0.9, 0.1, 0.0)
         elif "val" in split:
+            split = (0.9, 0.1, 0.0)
+        elif "test" in split:
             split = (0.9, 0.0, 0.1)
         else:
             raise ValueError(f"Not supported split: {split}")
@@ -627,17 +647,17 @@ def concat_and_split_datasets(
 
     train_dataset = Subset(datasets, cast(Sequence[int], indices[0]))
     if indices[1] is not None:
-        test_dataset = Subset(datasets, indices[1])
-    else:
-        test_dataset = None
-    if indices[2] is not None:
-        val_dataset = Subset(datasets, indices[2])
+        val_dataset = Subset(datasets, indices[1])
     else:
         val_dataset = None
-    return train_dataset, test_dataset, val_dataset
+    if indices[2] is not None:
+        test_dataset = Subset(datasets, indices[2])
+    else:
+        test_dataset = None
+    return train_dataset, val_dataset, test_dataset
 
 
-def torchvision_train_test_val_datasets(
+def torchvision_train_val_test_datasets(
     name: str,
     root: str = "./datasets",
     transform: Optional[Callable] = None,
@@ -682,24 +702,6 @@ def torchvision_train_test_val_datasets(
             kwargs["download"] = None
         train_dataset = found_dataset(**kwargs)
 
-    # test datasets
-    if "train" in arg_spec:
-        kwargs["train"] = False
-        test_dataset = found_dataset(**kwargs)
-    elif "split" in arg_spec:
-        kwargs["split"] = "test"
-        try:
-            test_dataset = found_dataset(**kwargs)
-        except ValueError:
-            test_dataset = None
-    elif "classes" in arg_spec:
-        if original_kwargs.get("classes") is not None:
-            kwargs["classes"] = original_kwargs["classes"] + "_test"
-        else:
-            kwargs["classes"] = "test"
-    else:
-        test_dataset = None
-
     # val datasets
     if "split" in arg_spec:
         kwargs["split"] = "val"
@@ -719,7 +721,25 @@ def torchvision_train_test_val_datasets(
     else:
         val_dataset = None
 
-    return train_dataset, test_dataset, val_dataset
+    # test datasets
+    if "train" in arg_spec:
+        kwargs["train"] = False
+        test_dataset = found_dataset(**kwargs)
+    elif "split" in arg_spec:
+        kwargs["split"] = "test"
+        try:
+            test_dataset = found_dataset(**kwargs)
+        except ValueError:
+            test_dataset = None
+    elif "classes" in arg_spec:
+        if original_kwargs.get("classes") is not None:
+            kwargs["classes"] = original_kwargs["classes"] + "_test"
+        else:
+            kwargs["classes"] = "test"
+    else:
+        test_dataset = None
+
+    return train_dataset, val_dataset, test_dataset
 
 
 @overload
@@ -787,3 +807,70 @@ def get_dataloaders(
         if not shuffle_others:
             shuffle = False
     return tuple(dataloaders)
+
+
+@overload
+def get_datamodule(
+    *,
+    datasets: Optional[DATASET],
+    batch_size: int,
+    num_workers: int,
+) -> LightningDataModule:
+    ...
+
+
+@overload
+def get_datamodule(
+    *datasets: Dataset,
+    batch_size: int,
+    num_workers: int,
+) -> LightningDataModule:
+    ...
+
+
+def get_datamodule(
+    *__datasets: Dataset,
+    datasets: Optional[DATASET] = None,
+    batch_size: int = 32,
+    num_workers: int = 4,
+) -> LightningDataModule:
+    if not hasattr(LightningDataModule, "from_datasets"):
+        raise ImportError(
+            "LightningDataModule is not available. "
+            "Please install PyTorch Lightning by following command: "
+            "pip install pytorch-lightning"
+        )
+    if datasets is None:
+        if not __datasets:
+            raise ValueError("No datasets provided")
+        if len(__datasets) == 1 and isinstance(__datasets[0], (tuple, list)):
+            datasets = __datasets[0]
+        else:
+            datasets = __datasets
+    elif isinstance(datasets, Dataset):
+        datasets = (datasets,)
+    if all(dataset is None for dataset in datasets):
+        raise ValueError("No datasets provided")
+    if len(datasets) == 1:
+        train_dataset = datasets[0]
+        val_dataset = None
+        test_dataset = None
+    elif len(datasets) == 2:
+        train_dataset = datasets[0]
+        val_dataset = datasets[1]
+        test_dataset = None
+    elif len(datasets) == 3:
+        train_dataset = datasets[0]
+        val_dataset = datasets[1]
+        test_dataset = datasets[2]
+    else:
+        raise ValueError("Too many datasets provided")
+
+    return LightningDataModule.from_datasets(
+        train_dataset=train_dataset,
+        val_dataset=val_dataset,
+        test_dataset=test_dataset,
+        batch_size=batch_size,
+        predict_dataset=None,
+        num_workers=num_workers,
+    )

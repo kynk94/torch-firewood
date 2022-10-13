@@ -1,6 +1,6 @@
 import warnings
 from enum import Enum
-from typing import Any, Dict, Optional, Tuple, Union
+from typing import Any, Optional, Tuple, Union
 
 import numpy as np
 import torch
@@ -39,10 +39,8 @@ class FrechetInceptionDistance(FID):
         feature: Union[int, nn.Module] = 2048,
         resize_lib: Union[str, RESIZE_LIB] = RESIZE_LIB.TORCH,
         reset_real_features: bool = True,
-        compute_on_cpu: bool = True,
         **kwargs: Any,
     ) -> None:
-        kwargs.update({"compute_on_cpu": compute_on_cpu})
         super().__init__(
             feature=feature,
             reset_real_features=reset_real_features,
@@ -94,8 +92,8 @@ class FrechetInceptionDistance(FID):
     ) -> None:
         """
         images: image tensor with shape (N, C, H, W)
-            if normalize is False, images should be in range of (0, 255).
-            else, images should be in images_range.
+            if normalize is True, images should be in images_range.
+            else, images should be in range of (0, 255).
         """
         if images.size(1) == 1:
             images = images.repeat(1, 3, 1, 1)
@@ -107,11 +105,6 @@ class FrechetInceptionDistance(FID):
             images = (images - images_range[0]) / (
                 images_range[1] - images_range[0]
             ) * 255 + 0.5
-        if self.resize_lib != "tf1":
+        if self.resize_lib != RESIZE_LIB.TF:
             images = self.resize(images)
-        features: Tensor = self.inception(images.clamp_(0, 255).byte())
-
-        if is_real:
-            self.real_features.append(features)
-        else:
-            self.fake_features.append(features)
+        super().update(images.clamp_(0, 255).byte(), is_real)

@@ -1,5 +1,5 @@
 from collections.abc import MutableMapping
-from typing import Any, Dict, Iterable, Tuple
+from typing import Any, Dict, Iterable
 
 import torch
 from torch import Tensor

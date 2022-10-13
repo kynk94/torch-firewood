@@ -140,8 +140,6 @@ ACTIVATIONS: Dict[str, ACTIVATION] = {
 
 
 class BiasedActivation(nn.Module):
-    operation: Callable[..., Tensor]
-
     def __init__(
         self,
         activation: str,
@@ -171,6 +169,7 @@ class BiasedActivation(nn.Module):
         self.gain = gain
         self.clamp = clamp if clamp is not None else -1
 
+        self.force_default = False
         self.default_operation = functools.partial(
             biased_activation,
             activation_function=activation_dict["func"],
@@ -182,39 +181,34 @@ class BiasedActivation(nn.Module):
         self.register_parameter("bias", None)
         self.to(device=self.device)
 
-    def forward(
-        self,
-        input: Tensor,
-    ) -> Tensor:
-        return self.operation(input, self.bias)
+    def _apply(self, fn: Callable[..., Any]) -> "BiasedActivation":
+        if "t" in fn.__code__.co_varnames:
+            with torch.no_grad():
+                device = getattr(fn(NULL_TENSOR), "device", "cpu")
+            self.device = torch.device(device)
+        return super()._apply(fn)
 
-    def _cpu(self) -> None:
-        self.device = torch.device("cpu")
-        setattr(self, "operation", self.default_operation)
-
-    def _cuda(self) -> None:
-        self.device = torch.device(torch.cuda.current_device())
+    @property
+    def operation(self) -> Callable[..., Tensor]:
+        if self.device.type == "cpu" or self.force_default:
+            return self.default_operation
         try:
-            cuda_operation = load_cuda_biased_activation(
+            return load_cuda_biased_activation(
                 activation=self.activation,
                 alpha=self.alpha,
                 gain=self.gain,
                 clamp=self.clamp,
                 bias_add_dim=self.bias_add_dim,
             )
-            setattr(self, "operation", cuda_operation)
-        except RuntimeError as e:
-            print(e)
+        except RuntimeError:
+            self.force_default = True
+            return self.default_operation
 
-    def _apply(self, fn: Callable[..., Any]) -> Any:
-        if "t" in fn.__code__.co_varnames:
-            with torch.no_grad():
-                device = getattr(fn(NULL_TENSOR), "device", "cpu")
-            if utils.is_cuda(device):
-                self._cuda()
-            else:
-                self._cpu()
-        return super()._apply(fn)
+    def forward(
+        self,
+        input: Tensor,
+    ) -> Tensor:
+        return self.operation(input, self.bias)
 
     def extra_repr(self) -> str:
         return ", ".join(

@@ -10,7 +10,7 @@ import torch.nn.functional as F
 from torch import Tensor
 from torchvision import transforms
 
-from firewood.common.backend import set_runtime_build
+from firewood.common.backend import set_runtime_build, set_seed
 from firewood.models.gan.pix2pix import Generator, PatchGAN
 from firewood.trainer.callbacks import I2ISampler, ModelCheckpoint
 from firewood.trainer.losses import gan_loss
@@ -20,8 +20,8 @@ from firewood.utils import highest_power_of_2
 from firewood.utils.data import (
     PairedImageFolder,
     get_dataloaders,
-    get_train_test_val_datasets,
-    torchvision_train_test_val_datasets,
+    get_train_val_test_datasets,
+    torchvision_train_val_test_datasets,
 )
 
 
@@ -167,6 +167,8 @@ def main():
     args = vars(parser.parse_args())
     # fmt: on
 
+    set_seed(0)
+
     if args["runtime_build"]:
         set_runtime_build(True)
 
@@ -177,7 +179,7 @@ def main():
             transform.append(A.RandomCrop(crop_resolution, crop_resolution))
         transform.extend([A.Normalize(0.5, 0.5), AT.ToTensorV2()])
         transform = A.ReplayCompose(transform)
-        datasets = get_train_test_val_datasets(
+        datasets = get_train_val_test_datasets(
             root=args["input"],
             dataset_class=PairedImageFolder,
             transform=transform,
@@ -195,10 +197,10 @@ def main():
             [transforms.ToTensor(), transforms.Normalize(0.5, 0.5)]
         )
         transform = transforms.Compose(transform)
-        datasets = torchvision_train_test_val_datasets(
+        datasets = torchvision_train_val_test_datasets(
             name=args["dataset"], root="./datasets", transform=transform
         )
-    train_dataloader, test_dataloader, val_dataloader = get_dataloaders(
+    train_dataloader, val_dataloader, test_dataloader = get_dataloaders(
         datasets=datasets,
         batch_size=args["batch_size"],
         shuffle=True,
@@ -229,7 +231,8 @@ def main():
     ]
     gpus = torch.cuda.device_count()
     trainer = pl.Trainer(
-        gpus=gpus,
+        accelerator="gpu",
+        devices=gpus,
         max_epochs=args["epoch"],
         max_steps=args["step"],
         precision=32,
