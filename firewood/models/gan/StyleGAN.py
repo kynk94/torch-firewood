@@ -303,7 +303,7 @@ class SynthesisNetwork(nn.Module):
                 continue
 
             image = self.to_images[str(resolution)](output)
-            if 0.0 <= alpha < 1.0:
+            if resolution > self.initial_resolution and 0.0 <= alpha < 1.0:
                 lower_image = self.to_images[str(resolution // 2)](prev_output)
                 upsampled_lower_image = utils.image.upsample(
                     lower_image, factor=2, mode="nearest"
