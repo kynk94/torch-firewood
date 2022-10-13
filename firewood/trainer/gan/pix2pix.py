@@ -10,7 +10,7 @@ import torch.nn.functional as F
 from torch import Tensor
 from torchvision import transforms
 
-from firewood.common.backend import set_runtime_build
+from firewood.common.backend import set_runtime_build, set_seed
 from firewood.models.gan.pix2pix import Generator, PatchGAN
 from firewood.trainer.callbacks import I2ISampler, ModelCheckpoint
 from firewood.trainer.losses import gan_loss
@@ -166,6 +166,8 @@ def main():
     parser.add_argument("--runtime_build", "-rb", action="store_true")
     args = vars(parser.parse_args())
     # fmt: on
+
+    set_seed(0)
 
     if args["runtime_build"]:
         set_runtime_build(True)

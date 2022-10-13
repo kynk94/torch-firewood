@@ -7,6 +7,7 @@ import torch
 from torch import Tensor
 from torchvision import transforms
 
+from firewood.common.backend import set_seed
 from firewood.common.types import INT
 from firewood.models.gan.GAN import Discriminator, Generator
 from firewood.trainer.callbacks import (
@@ -158,6 +159,8 @@ def main():
     parser.add_argument("--learning_rate", "-lr", type=float, default=2e-4)
     args = vars(parser.parse_args())
     # fmt: on
+
+    set_seed(0)
 
     transform = transforms.Compose(
         [transforms.ToTensor(), transforms.Normalize(0.5, 0.5)]

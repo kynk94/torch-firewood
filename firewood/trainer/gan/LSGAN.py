@@ -7,7 +7,7 @@ import torch
 from torch import Tensor
 from torchvision import transforms
 
-from firewood.common.backend import set_runtime_build
+from firewood.common.backend import set_runtime_build, set_seed
 from firewood.common.types import INT
 from firewood.models.gan.LSGAN import Discriminator, Generator
 from firewood.trainer.callbacks import (
@@ -175,6 +175,8 @@ def main():
     parser.add_argument("--runtime_build", "-rb", action="store_true")
     args = vars(parser.parse_args())
     # fmt: on
+
+    set_seed(0)
 
     if args["runtime_build"]:
         set_runtime_build(True)
