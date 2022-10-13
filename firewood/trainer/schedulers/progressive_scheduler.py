@@ -1,3 +1,4 @@
+import math
 from typing import Dict, Optional, Tuple
 
 from pytorch_lightning import Trainer
@@ -44,22 +45,25 @@ class ProgressiveScheduler(_LRScheduler):
         self.phase = 0
         self.alpha = 1.0
         self.resolution = initial_resolution
+        self.initial_batch_size = None
 
     def update(self, batch_size: int) -> None:
         """
         key_images: new phase            level_epoch                  fade_epoch
         alpha:      1 ----------------- decrease start ----------------------- 0
         """
+        if self.initial_batch_size is None:
+            self.initial_batch_size = batch_size
         self.current_key_images += batch_size
         level_key_images = int(self.dataset_size * self.level_epoch)
         fade_key_images = int(self.dataset_size * self.fade_epoch)
         phase_key_images = level_key_images + fade_key_images
-        phase, current_key_images = divmod(
+        phase, phase_seen_images = divmod(
             self.current_key_images, phase_key_images
         )
         alpha = 1.0
-        if current_key_images > level_key_images:
-            alpha -= (current_key_images - level_key_images) / fade_key_images
+        if phase_seen_images > level_key_images:
+            alpha -= (phase_seen_images - level_key_images) / fade_key_images
 
         resolution = min(
             int(self.initial_resolution * 2**phase), self.max_resolution
@@ -73,9 +77,10 @@ class ProgressiveScheduler(_LRScheduler):
         # If next step is next phase, update batch size of dataset
         if (
             getattr(self, "trainer", None) is not None
-            and self.current_key_images + batch_size >= phase_key_images
+            and phase_seen_images + batch_size >= phase_key_images
         ):
-            update_train_batch_size_of_trainer(self.trainer, batch_size // 2)
+            next_batch = max(batch_size // 2, self.initial_batch_size // 16, 2)
+            update_train_batch_size_of_trainer(self.trainer, next_batch)
 
     def mod_lr(self, resolution: int) -> None:
         for param_group in self.optimizer.param_groups:
@@ -88,3 +93,8 @@ class ProgressiveScheduler(_LRScheduler):
         ramp_up = min(self.current_key_images / ramp_up_key_images, 1.0)
         for param_group in self.optimizer.param_groups:
             param_group["lr"] *= ramp_up
+
+    def get_lr(self) -> Tuple[float, ...]:
+        return tuple(
+            param_group["lr"] for param_group in self.optimizer.param_groups
+        )
