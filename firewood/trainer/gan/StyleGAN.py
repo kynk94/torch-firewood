@@ -292,7 +292,7 @@ def main():
     step_group.add_argument("--epoch", "-e", type=int, default=-1)
     step_group.add_argument("--step", "-s", type=int, default=-1)
     parser.add_argument("--checkpoint", "-ckpt", type=str, default=None)
-    parser.add_argument("--resolution", "-r", type=int, default=256)
+    parser.add_argument("--resolution", "-r", type=int, default=1024)
     parser.add_argument("--batch_size", "-b", type=int, default=256)
     parser.add_argument("--latent_dim", "-l", type=int, default=512)
     parser.add_argument("--learning_rate", "-lr", type=float, default=1e-3)
