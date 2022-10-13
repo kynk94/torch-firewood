@@ -199,7 +199,7 @@ def main():
         datasets = torchvision_train_val_test_datasets(
             name=args["dataset"], root="./datasets", transform=transform
         )
-    train_dataloader, test_dataloader, val_dataloader = get_dataloaders(
+    train_dataloader, val_dataloader, test_dataloader = get_dataloaders(
         datasets=datasets,
         batch_size=args["batch_size"],
         shuffle=True,
@@ -234,7 +234,8 @@ def main():
     ]
     gpus = torch.cuda.device_count()
     trainer = pl.Trainer(
-        gpus=gpus,
+        accelerator="gpu",
+        devices=gpus,
         max_epochs=args["epoch"],
         max_steps=args["step"],
         precision=32,

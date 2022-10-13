@@ -5,9 +5,7 @@ from pytorch_lightning import Trainer
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import _LRScheduler
 
-from firewood.trainer.utils.data_manager import (
-    update_train_batch_size_of_trainer,
-)
+from firewood.trainer.utils.data import update_train_batch_size_of_trainer
 
 DEFAULT_LR = {128: 0.0015, 256: 0.002, 512: 0.003, 1024: 0.003}
 

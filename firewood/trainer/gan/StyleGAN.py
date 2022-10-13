@@ -1,6 +1,6 @@
 import argparse
 from collections import defaultdict
-from typing import Any, Dict, List, Tuple
+from typing import Any, Dict, List, Optional, Tuple
 
 import pytorch_lightning as pl
 import torch
@@ -52,6 +52,7 @@ class StyleGAN(pl.LightningModule):
         resolution: int = 1024,
         initial_resolution: int = 4,
         image_channels: int = 3,
+        dataset_size: int = 60000,
         lr_equalization: bool = True,
         learning_rate: float = 2e-4,
         r1_gamma: float = 10.0,
@@ -59,6 +60,8 @@ class StyleGAN(pl.LightningModule):
     ):
         super().__init__()
         self.save_hyperparameters()
+        self.automatic_optimization = False
+
         self.current_resolution = initial_resolution
         self.mapping = MappingNetwork(
             latent_dim=latent_dim,
@@ -95,8 +98,13 @@ class StyleGAN(pl.LightningModule):
         # metrics
         self.fid = FrechetInceptionDistance()
 
-    def forward(self, input: Tensor, resolution: int = 1024) -> Tensor:
-        return self.synthesis(input, resolution=resolution)
+    def forward(
+        self, input: Tensor, resolution: Optional[int] = None
+    ) -> Tensor:
+        style = self.mapping(input)
+        return self.synthesis(
+            style, resolution=resolution or self.current_resolution
+        )
 
     def generate_latent(self, batch_size: int) -> Tensor:
         return torch.randn(
@@ -121,12 +129,14 @@ class StyleGAN(pl.LightningModule):
         with torch.no_grad():
             style: Tensor = self.mapping(latent)
             generated_image: Tensor = self.synthesis(style, alpha, resolution)
-        score_fake: Tensor = self.discriminator(generated_image)
+        if self.hparams.r1_gamma != 0.0:
+            input.requires_grad = True
         score_real: Tensor = self.discriminator(input)
+        score_fake: Tensor = self.discriminator(generated_image)
 
-        loss_fake = logistic_nonsaturating_loss(score_fake, False)
         loss_real = logistic_nonsaturating_loss(score_real, True)
-        loss = loss_fake + loss_real
+        loss_fake = logistic_nonsaturating_loss(score_fake, False)
+        loss = loss_real + loss_fake
 
         log_dict = dict()
         if self.hparams.r1_gamma != 0.0:
@@ -149,23 +159,35 @@ class StyleGAN(pl.LightningModule):
         )
         return log_dict
 
-    def training_step(
-        self, batch: Tuple[Tensor, ...], batch_idx: int, optimizer_idx: int
-    ) -> Tensor:
+    def training_step(self, batch: Tuple[Tensor, ...], batch_idx: int) -> None:
         real_images, _ = batch
         alpha, resolution = self.update_scheduler(real_images.size(0))
         self.current_resolution = resolution
-        if optimizer_idx == 0:
-            real_images = TFT.resize(real_images, resolution, antialias=True)
-            log_dict = self.discriminator_step(real_images, alpha)
-            key = "loss/dis"
-        else:
-            log_dict = self.generator_step(real_images, alpha, resolution)
-            key = "loss/gen"
-        loss = log_dict.pop(key)
-        self.log(key, loss, prog_bar=True, on_step=True, on_epoch=True)
-        self.log_dict(log_dict, on_step=True, on_epoch=True)
-        return loss
+        real_images = TFT.resize(real_images, resolution, antialias=True)
+
+        gen_optimizer, dis_optimizer = self.optimizers()
+
+        dis_log_dict = self.discriminator_step(real_images, alpha)
+        dis_loss = dis_log_dict.pop("loss/dis")
+        dis_optimizer.zero_grad()
+        self.manual_backward(dis_loss)
+        dis_optimizer.step()
+
+        gen_log_dict = self.generator_step(real_images, alpha, resolution)
+        gen_loss = gen_log_dict.pop("loss/gen")
+        gen_optimizer.zero_grad()
+        self.manual_backward(gen_loss)
+        gen_optimizer.step()
+
+        for lr_scheduler in self.lr_schedulers():
+            lr_scheduler.step()
+        prog_bar_dict = {
+            "loss/gen": gen_loss,
+            "loss/dis": dis_loss,
+        }
+        self.log_dict(prog_bar_dict, on_step=True, on_epoch=True, prog_bar=True)
+        self.log_dict(dis_log_dict, on_step=True, on_epoch=True)
+        self.log_dict(gen_log_dict, on_step=True, on_epoch=True)
 
     def validation_step(
         self, batch: Tensor, batch_idx: int
@@ -184,28 +206,13 @@ class StyleGAN(pl.LightningModule):
         loss_real = logistic_nonsaturating_loss(score_real, True)
         loss = loss_fake + loss_real
 
-        log_dict = dict()
-        if self.hparams.r1_gamma != 0.0:
-            r1_penalty = simple_gradient_penalty(score_real, input)
-            r1_penalty *= self.hparams.r1_gamma / 2
-            loss += r1_penalty
-            log_dict.update({"val/loss_r1_penalty": r1_penalty})
-        if self.hparams.r2_gamma != 0.0:
-            r2_penalty = simple_gradient_penalty(score_fake, generated_image)
-            r2_penalty *= self.hparams.r2_gamma / 2
-            loss += r2_penalty
-            log_dict.update({"val/loss_r2_penalty": r2_penalty})
-
         self.fid.update(real_images, True)
         self.fid.update(generated_image, False)
-        log_dict.update(
-            {
-                "val/loss": loss,
-                "val/score_real": score_real.mean(),
-                "val/score_fake": score_fake.mean(),
-            }
-        )
-        return log_dict
+        return {
+            "val/loss": loss,
+            "val/score_real": score_real.mean(),
+            "val/score_fake": score_fake.mean(),
+        }
 
     def validation_epoch_end(self, outputs: List[Dict[str, Tensor]]) -> None:
         outputs_cache = defaultdict(list)
@@ -236,10 +243,10 @@ class StyleGAN(pl.LightningModule):
         )
 
         scheduler_kwargs = dict(
-            dataset_size=self.hparams.dataset_size,
+            dataset_size=getattr(self.hparams, "dataset_size", 60000),
             initial_resolution=self.hparams.initial_resolution,
             max_resolution=self.hparams.resolution,
-            lavel_epoch=getattr(self.hparams, "lavel_epoch", 1.0),
+            level_epoch=getattr(self.hparams, "level_epoch", 1.0),
             fade_epoch=getattr(self.hparams, "fade_epoch", 1.0),
             ramp_up_epoch=getattr(self.hparams, "ramp_up_epoch", 0.0),
             lr_dict={128: 0.0015, 256: 0.002, 512: 0.003, 1024: 0.003},
@@ -254,20 +261,19 @@ class StyleGAN(pl.LightningModule):
             discriminator_optimizer, **scheduler_kwargs
         )
         discriminator_scheduler.trainer = None
-        # discriminator first, generator second
         return (
-            {
-                "optimizer": discriminator_optimizer,
-                "lr_scheduler": discriminator_scheduler,
-            },
             {
                 "optimizer": generator_optimizer,
                 "lr_scheduler": generator_scheduler,
             },
+            {
+                "optimizer": discriminator_optimizer,
+                "lr_scheduler": discriminator_scheduler,
+            },
         )
 
     def update_scheduler(self, batch_size: int) -> Tuple[float, int]:
-        total_minibatch_size = self.trainer.num_gpus * batch_size
+        total_minibatch_size = self.trainer.num_devices * batch_size
         g_scheduler, d_scheduler = self.lr_schedulers()
         g_scheduler.update(total_minibatch_size)
         d_scheduler.update(total_minibatch_size)
@@ -286,8 +292,8 @@ def main():
     step_group.add_argument("--epoch", "-e", type=int, default=-1)
     step_group.add_argument("--step", "-s", type=int, default=-1)
     parser.add_argument("--checkpoint", "-ckpt", type=str, default=None)
-    parser.add_argument("--resolution", "-r", type=int, default=1024)
-    parser.add_argument("--batch_size", "-b", type=int, default=8)
+    parser.add_argument("--resolution", "-r", type=int, default=256)
+    parser.add_argument("--batch_size", "-b", type=int, default=256)
     parser.add_argument("--latent_dim", "-l", type=int, default=512)
     parser.add_argument("--learning_rate", "-lr", type=float, default=1e-3)
     parser.add_argument("--runtime_build", "-rb", action="store_true")
@@ -302,7 +308,13 @@ def main():
     transform = []
     if args["resolution"] is not None:
         transform.append(transforms.Resize(args["resolution"]))
-    transform.extend([transforms.ToTensor(), transforms.Normalize(0.5, 0.5)])
+    transform.extend(
+        [
+            transforms.RandomHorizontalFlip(),
+            transforms.ToTensor(),
+            transforms.Normalize(0.5, 0.5),
+        ]
+    )
     transform = transforms.Compose(transform)
 
     if args["input"]:
@@ -317,23 +329,22 @@ def main():
         datasets = torchvision_train_val_test_datasets(
             name=args["dataset"], root="./datasets", transform=transform
         )
-    train_dataloader, test_dataloader, val_dataloader = get_dataloaders(
+    train_dataloader, val_dataloader, test_dataloader = get_dataloaders(
         datasets=datasets,
         batch_size=args["batch_size"],
         shuffle=True,
         pin_memory=False,
     )
-    # TODO: mutable batch size for each resolution
 
     sample_image: Tensor = next(iter(train_dataloader))[0]  # (N, C, H, W)
     channels, resolution = sample_image.shape[1:3]
 
     if args["checkpoint"] is not None:
-        lsgan = StyleGAN.load_from_checkpoint(
+        model = StyleGAN.load_from_checkpoint(
             find_checkpoint(args["checkpoint"])
         )
     else:
-        lsgan = StyleGAN(
+        model = StyleGAN(
             latent_dim=512,
             label_dim=0,
             style_dim=512,
@@ -343,8 +354,9 @@ def main():
             noise="normal",
             fir=[1, 2, 1],
             mbstd_group=4,
-            resolution=1024,
+            resolution=args["resolution"],
             image_channels=3,
+            dataset_size=len(train_dataloader.dataset),
             lr_equalization=True,
             learning_rate=args["learning_rate"],
             r1_gamma=10.0,
@@ -362,7 +374,8 @@ def main():
     ]
     gpus = torch.cuda.device_count()
     trainer = pl.Trainer(
-        gpus=gpus,
+        accelerator="gpu",
+        devices=gpus,
         max_epochs=args["epoch"],
         max_steps=args["step"],
         precision=32,
@@ -371,7 +384,7 @@ def main():
         strategy="ddp" if gpus > 1 else None,
     )
     trainer.fit(
-        lsgan,
+        model,
         train_dataloaders=train_dataloader,
         val_dataloaders=val_dataloader or test_dataloader,
     )
