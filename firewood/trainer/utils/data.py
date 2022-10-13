@@ -1,4 +1,4 @@
-from typing import Any, Mapping, Optional, Sequence
+from typing import Any, Mapping, Optional, Sequence, Tuple, cast
 
 from pytorch_lightning import LightningDataModule, Trainer
 from pytorch_lightning.trainer.connectors.data_connector import (
@@ -29,8 +29,8 @@ def update_train_batch_size_of_trainer(
         dl_args, dl_kwargs = _get_dataloader_init_args_and_kwargs(
             dataloader, sampler, mode=RunningStage.TRAINING
         )
-        if len(dl_args) > 2 and isinstance(dl_args[1], int):
-            dl_args = (dl_args[0], batch_size, *dl_args[2:])
+        if len(dl_args) > 2 and isinstance(dl_args[1], int):  # type: ignore
+            dl_args = cast(Tuple[Any], (dl_args[0], batch_size, *dl_args[2:]))
         else:
             dl_kwargs.update(batch_size=batch_size)
         return _reinstantiate_wrapped_cls(dataloader, *dl_args, **dl_kwargs)
@@ -61,7 +61,8 @@ def update_train_batch_size_of_trainer(
 
     trainer.reset_train_dataloader()
     data_fetcher = trainer.fit_loop._data_fetcher
-    data_fetcher.setup(
-        trainer.train_dataloader,
-        batch_to_device=getattr(data_fetcher, "batch_to_device", None),
-    )
+    if data_fetcher is not None:
+        data_fetcher.setup(
+            cast(DataLoader, trainer.train_dataloader),
+            batch_to_device=getattr(data_fetcher, "batch_to_device", None),
+        )

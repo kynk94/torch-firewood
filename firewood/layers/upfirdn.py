@@ -65,8 +65,6 @@ def get_upfirdn_layer(
 
 
 class _UpFirDnNd(nn.Module):
-    operation: Callable[..., Tensor]
-
     def __init__(
         self,
         rank: int,

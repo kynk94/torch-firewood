@@ -43,7 +43,7 @@ class ProgressiveScheduler(_LRScheduler):
         self.phase = 0
         self.alpha = 1.0
         self.resolution = initial_resolution
-        self.initial_batch_size = None
+        self.initial_batch_size: Optional[int] = None
 
     def update(self, batch_size: int) -> None:
         """
@@ -92,7 +92,7 @@ class ProgressiveScheduler(_LRScheduler):
         for param_group in self.optimizer.param_groups:
             param_group["lr"] *= ramp_up
 
-    def get_lr(self) -> Tuple[float, ...]:
+    def get_lr(self) -> Tuple[float, ...]:  # type: ignore
         return tuple(
             param_group["lr"] for param_group in self.optimizer.param_groups
         )
