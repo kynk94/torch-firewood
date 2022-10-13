@@ -6,6 +6,7 @@ import pytorch_lightning as pl
 import torch
 import torchvision.transforms.functional_tensor as TFT
 from pytorch_lightning.callbacks import LearningRateMonitor
+from pytorch_lightning.loggers import TensorBoardLogger
 from torch import Tensor
 from torchvision import transforms
 
@@ -264,7 +265,7 @@ class StyleGAN(pl.LightningModule):
                 "optimizer": generator_optimizer,
                 "lr_scheduler": {
                     "scheduler": generator_scheduler,
-                    "name": "generator_scheduler",
+                    "name": "scheduler/gen",
                     "interval": "step",
                     "frequency": 1,
                 },
@@ -273,7 +274,7 @@ class StyleGAN(pl.LightningModule):
                 "optimizer": discriminator_optimizer,
                 "lr_scheduler": {
                     "scheduler": discriminator_scheduler,
-                    "name": "discriminator_scheduler",
+                    "name": "scheduler/dis",
                     "interval": "step",
                     "frequency": 1,
                 },
@@ -390,6 +391,9 @@ def main():
         check_val_every_n_epoch=5,
         callbacks=callbacks,
         strategy="ddp" if gpus > 1 else None,
+    )
+    trainer.logger = TensorBoardLogger(
+        trainer.default_root_dir, default_hp_metric=False
     )
     trainer.fit(
         model,
