@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Tuple
 
 import pytorch_lightning as pl
 import torch
+from pytorch_lightning.loggers import TensorBoardLogger
 from torch import Tensor
 from torchvision import transforms
 
@@ -243,6 +244,9 @@ def main():
         check_val_every_n_epoch=5,
         callbacks=callbacks,
         strategy="ddp" if gpus > 1 else None,
+    )
+    trainer.logger = TensorBoardLogger(
+        trainer.default_root_dir, default_hp_metric=False
     )
     trainer.fit(
         lsgan,
