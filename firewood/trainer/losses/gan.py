@@ -61,7 +61,7 @@ def gradient_penalty(
     interpolates.requires_grad = True
     score: Tensor = get_nested_first(discriminator(interpolates))
     gradients = torch.autograd.grad(
-        outputs=score,
+        outputs=score.mean(),
         inputs=interpolates,
         create_graph=True,
     )[0]
@@ -75,7 +75,7 @@ def simple_gradient_penalty(
     images: Tensor,
 ) -> Tensor:
     gradients = torch.autograd.grad(
-        outputs=score,
+        outputs=score.mean(),
         inputs=images,
         create_graph=True,
     )[0]
