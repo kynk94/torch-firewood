@@ -7,6 +7,7 @@ import torch
 
 from firewood import layers
 from firewood.layers.biased_activations import ACTIVATIONS
+from tests.helpers.runif import runif
 
 
 def dump_pickle(obj, path):
@@ -37,6 +38,22 @@ def test_biased_activation_cpu(activation):
     ), "Biased activation not loaded correctly"
 
 
+@runif(min_gpus=1)
+@pytest.mark.parametrize("activation", ACTIVATIONS)
+def test_biased_activation_gpu(activation):
+    bias_act = layers.BiasedActivation(activation).cuda()
+    assert bias_act.activation == activation
+
+    pickle_path = f"./temp/{activation}.pickle"
+    dump_pickle(bias_act, pickle_path)
+    bias_act_loaded = load_pickle(pickle_path)
+
+    shutil.rmtree("./temp")
+    assert (
+        bias_act_loaded.activation == activation
+    ), "Biased activation not loaded correctly"
+
+
 def test_gfix_conv():
     gfix_conv = layers.GFixConv2d(1, 1, 1)
 
@@ -52,8 +69,24 @@ def test_gfix_conv():
     ), "GFixConv2d not loaded correctly"
 
 
-def test_upfirdn():
+def test_upfirdn_cpu():
     upfirdn = layers.UpFirDn2d([1, 3, 3, 1], up=2, down=2)
+
+    pickle_path = f"./temp/upfirdn.pickle"
+    dump_pickle(upfirdn, pickle_path)
+    upfirdn_loaded = load_pickle(pickle_path)
+
+    shutil.rmtree("./temp")
+    assert (
+        torch.allclose(upfirdn_loaded.kernel, upfirdn.kernel)
+        and upfirdn_loaded.up == upfirdn.up
+        and upfirdn_loaded.down == upfirdn.down
+    ), "UpFirDn2d not loaded correctly"
+
+
+@runif(min_gpus=1)
+def test_upfirdn_gpu():
+    upfirdn = layers.UpFirDn2d([1, 3, 3, 1], up=2, down=2).cuda()
 
     pickle_path = f"./temp/upfirdn.pickle"
     dump_pickle(upfirdn, pickle_path)
