@@ -24,10 +24,14 @@ def update_train_batch_size_of_trainer(
         sampler = trainer._data_connector._resolve_sampler(
             dataloader, shuffle=shuffle, mode=RunningStage.TRAINING
         )
+        if hasattr(sampler, "batch_size"):
+            setattr(sampler, "batch_size", batch_size)
         dl_args, dl_kwargs = _get_dataloader_init_args_and_kwargs(
             dataloader, sampler, mode=RunningStage.TRAINING
         )
-        if "batch_size" in dl_kwargs:
+        if len(dl_args) > 2 and isinstance(dl_args[1], int):
+            dl_args = (dl_args[0], batch_size, *dl_args[2:])
+        else:
             dl_kwargs.update(batch_size=batch_size)
         return _reinstantiate_wrapped_cls(dataloader, *dl_args, **dl_kwargs)
 
@@ -54,3 +58,10 @@ def update_train_batch_size_of_trainer(
         )
     else:
         setattr(datamodule, "train_dataloader", train_dataloader)
+
+    trainer.reset_train_dataloader()
+    data_fetcher = trainer.fit_loop._data_fetcher
+    data_fetcher.setup(
+        trainer.train_dataloader,
+        batch_to_device=getattr(data_fetcher, "batch_to_device", None),
+    )
