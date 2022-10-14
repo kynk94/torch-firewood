@@ -1,12 +1,11 @@
 import argparse
+import math
 from collections import defaultdict
 from typing import Any, Dict, List, Optional, Tuple
 
 import pytorch_lightning as pl
 import torch
-import torchvision.transforms.functional_tensor as TFT
 from pytorch_lightning.callbacks import LearningRateMonitor
-from pytorch_lightning.loggers import TensorBoardLogger
 from torch import Tensor
 from torchvision import transforms
 
@@ -30,12 +29,15 @@ from firewood.trainer.losses import (
 from firewood.trainer.metrics import FrechetInceptionDistance
 from firewood.trainer.schedulers import ProgressiveScheduler
 from firewood.trainer.utils import find_checkpoint
-from firewood.utils.data import (
+from firewood.trainer.utils.cuda import print_cuda_memory
+from firewood.trainer.utils.data import (
+    DataModule,
     NoClassImageFolder,
-    get_dataloaders,
     get_train_val_test_datasets,
     torchvision_train_val_test_datasets,
+    update_train_dataloader_of_trainer,
 )
+from firewood.utils.image import tensor_resize
 
 
 class StyleGAN(pl.LightningModule):
@@ -54,6 +56,7 @@ class StyleGAN(pl.LightningModule):
         initial_resolution: int = 4,
         image_channels: int = 3,
         dataset_size: int = 60000,
+        initial_batch_size: int = 64,
         lr_equalization: bool = True,
         learning_rate: float = 2e-4,
         r1_gamma: float = 10.0,
@@ -160,11 +163,34 @@ class StyleGAN(pl.LightningModule):
         )
         return log_dict
 
+    def on_train_start(self) -> None:
+        update_train_dataloader_of_trainer(
+            self.trainer, resolution=self.hparams.initial_resolution
+        )
+        if self.global_rank != 0 or self.device.type != "cuda":
+            return
+
+        init_phase = math.log2(self.hparams.initial_resolution)
+        last_phase = math.log2(self.hparams.resolution)
+        for phase in range(int(init_phase), int(last_phase) + 1):
+            resolution = 2**phase
+            batch_size = self.calculate_batch_size(resolution)
+            images = torch.randn(
+                batch_size, 3, resolution, resolution, device=self.device
+            )
+            self.discriminator_step(images, 1.0)
+            self.generator_step(images, 1.0, resolution)
+            print_cuda_memory(images)
+
     def training_step(self, batch: Tuple[Tensor, ...], batch_idx: int) -> None:
         real_images, _ = batch
-        alpha, resolution = self.update_scheduler(real_images.size(0))
-        self.current_resolution = resolution
-        real_images = TFT.resize(real_images, resolution, antialias=True)
+        mbstd_group = min(real_images.size(0), self.hparams.mbstd_group)
+        remainder = real_images.size(0) % mbstd_group
+        if remainder != 0:
+            real_images = real_images[:-remainder]
+
+        alpha, resolution = self.get_alpha_resolution()
+        real_images = tensor_resize(real_images, resolution, antialias=True)
 
         gen_optimizer, dis_optimizer = self.optimizers()
 
@@ -180,26 +206,39 @@ class StyleGAN(pl.LightningModule):
         self.manual_backward(gen_loss)
         gen_optimizer.step()
 
-        for lr_scheduler in self.lr_schedulers():
-            lr_scheduler.step()
-        prog_bar_dict = {
-            "loss/gen": gen_loss,
-            "loss/dis": dis_loss,
-        }
-        self.log_dict(prog_bar_dict, on_step=True, on_epoch=True, prog_bar=True)
-        self.log_dict(dis_log_dict, on_step=True, on_epoch=True)
-        self.log_dict(gen_log_dict, on_step=True, on_epoch=True)
+        self.update_scheduler(real_images.size(0))
+
+        self.log_dict(
+            {
+                "loss/gen": gen_loss,
+                "loss/dis": dis_loss,
+            },
+            on_step=True,
+            on_epoch=True,
+            sync_dist=True,
+            prog_bar=True,
+        )
+        dis_log_dict.update(gen_log_dict)
+        self.log_dict(dis_log_dict, on_step=True, on_epoch=True, sync_dist=True)
 
     def validation_step(
         self, batch: Tensor, batch_idx: int
     ) -> Dict[str, Tensor]:
-        resolution = self.current_resolution
         real_images, _ = batch
-        real_images = TFT.resize(real_images, resolution, antialias=True)
+        mbstd_group = min(real_images.size(0), self.hparams.mbstd_group)
+        remainder = real_images.size(0) % mbstd_group
+        if remainder != 0:
+            real_images = real_images[:-remainder]
+
+        real_images = tensor_resize(
+            real_images, self.current_resolution, antialias=True
+        )
 
         latent = self.generate_latent(real_images.size(0))
         style = self.mapping(latent)
-        generated_image = self.synthesis(style, resolution=resolution)
+        generated_image = self.synthesis(
+            style, resolution=self.current_resolution
+        )
         score_fake: Tensor = self.discriminator(generated_image)
         score_real: Tensor = self.discriminator(real_images)
 
@@ -225,7 +264,7 @@ class StyleGAN(pl.LightningModule):
             for key, value in outputs_cache.items()
         }
         log_dict["val/fid"] = self.fid.compute()
-        self.log_dict(log_dict)
+        self.log_dict(log_dict, sync_dist=True)
 
     def configure_optimizers(self) -> Tuple[Any]:
         lr = self.hparams.learning_rate
@@ -247,8 +286,8 @@ class StyleGAN(pl.LightningModule):
             dataset_size=getattr(self.hparams, "dataset_size", 60000),
             initial_resolution=self.hparams.initial_resolution,
             max_resolution=self.hparams.resolution,
-            level_epoch=getattr(self.hparams, "level_epoch", 1.0),
-            fade_epoch=getattr(self.hparams, "fade_epoch", 1.0),
+            level_epoch=getattr(self.hparams, "level_epoch", 10.0),
+            fade_epoch=getattr(self.hparams, "fade_epoch", 10.0),
             ramp_up_epoch=getattr(self.hparams, "ramp_up_epoch", 0.0),
             lr_dict={128: 0.0015, 256: 0.002, 512: 0.003, 1024: 0.003},
         )
@@ -258,16 +297,12 @@ class StyleGAN(pl.LightningModule):
         discriminator_scheduler = ProgressiveScheduler(
             discriminator_optimizer, **scheduler_kwargs
         )
-        generator_scheduler.trainer = self.trainer
-        discriminator_scheduler.trainer = None
         return (
             {
                 "optimizer": generator_optimizer,
                 "lr_scheduler": {
                     "scheduler": generator_scheduler,
                     "name": "scheduler/gen",
-                    "interval": "step",
-                    "frequency": 1,
                 },
             },
             {
@@ -275,17 +310,31 @@ class StyleGAN(pl.LightningModule):
                 "lr_scheduler": {
                     "scheduler": discriminator_scheduler,
                     "name": "scheduler/dis",
-                    "interval": "step",
-                    "frequency": 1,
                 },
             },
         )
 
-    def update_scheduler(self, batch_size: int) -> Tuple[float, int]:
+    def calculate_batch_size(self, resolution: int) -> int:
+        scale = min(resolution / self.hparams.initial_resolution, 8)
+        return max(2, int(self.hparams.initial_batch_size / scale))
+
+    def update_scheduler(self, batch_size: int) -> None:
         total_minibatch_size = self.trainer.num_devices * batch_size
         g_scheduler, d_scheduler = self.lr_schedulers()
         g_scheduler.update(total_minibatch_size)
         d_scheduler.update(total_minibatch_size)
+        if g_scheduler.resolution != self.current_resolution:
+            next_batch_size = self.calculate_batch_size(g_scheduler.resolution)
+            update_train_dataloader_of_trainer(
+                self.trainer, next_batch_size, g_scheduler.resolution
+            )
+        self.current_resolution = g_scheduler.resolution
+
+        g_scheduler.step()
+        d_scheduler.step()
+
+    def get_alpha_resolution(self) -> Tuple[float, int]:
+        g_scheduler, d_scheduler = self.lr_schedulers()
         return g_scheduler.alpha, g_scheduler.resolution
 
 
@@ -338,14 +387,14 @@ def main():
         datasets = torchvision_train_val_test_datasets(
             name=args["dataset"], root="./datasets", transform=transform
         )
-    train_dataloader, val_dataloader, test_dataloader = get_dataloaders(
+    datamodule = DataModule(
         datasets=datasets,
         batch_size=args["batch_size"],
-        shuffle=True,
+        num_workers=8,
         pin_memory=False,
     )
 
-    sample_image: Tensor = next(iter(train_dataloader))[0]  # (N, C, H, W)
+    sample_image: Tensor = next(iter(datasets[0]))[0]  # (N, C, H, W)
     channels, resolution = sample_image.shape[1:3]
 
     if args["checkpoint"] is not None:
@@ -365,13 +414,15 @@ def main():
             mbstd_group=4,
             resolution=args["resolution"],
             image_channels=3,
-            dataset_size=len(train_dataloader.dataset),
+            dataset_size=len(datasets[0]),
+            initial_batch_size=args["batch_size"],
             lr_equalization=True,
             learning_rate=args["learning_rate"],
             r1_gamma=10.0,
             r2_gamma=0.0,
         )
 
+    gpus = torch.cuda.device_count()
     callbacks = [
         ExponentialMovingAverage(),
         ModelCheckpoint(save_last_k=3),
@@ -381,7 +432,6 @@ def main():
         ),
         LearningRateMonitor(),
     ]
-    gpus = torch.cuda.device_count()
     trainer = pl.Trainer(
         accelerator="gpu",
         devices=gpus,
@@ -390,16 +440,10 @@ def main():
         precision=32,
         check_val_every_n_epoch=5,
         callbacks=callbacks,
-        strategy="ddp" if gpus > 1 else None,
+        strategy="ddp" if gpus > 0 else None,
     )
-    trainer.logger = TensorBoardLogger(
-        trainer.default_root_dir, default_hp_metric=False
-    )
-    trainer.fit(
-        model,
-        train_dataloaders=train_dataloader,
-        val_dataloaders=val_dataloader or test_dataloader,
-    )
+    trainer.logger._default_hp_metric = False
+    trainer.fit(model, datamodule=datamodule)
 
 
 if __name__ == "__main__":

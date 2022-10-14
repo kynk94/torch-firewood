@@ -4,17 +4,19 @@ from typing import Any, Dict, Iterable
 import torch
 from torch import Tensor
 
+from firewood.common.types import DEVICE
 from firewood.utils import clone_to_cpu_tensor
 
 
 class StateDictManager(MutableMapping):
     """
     Maintain a state_dict of parameters and their devices.
-    Store the parameters on CPU and move them to the device when they are
-    accessed.
+    If device is "cpu", can store the parameters on CPU and move them to the
+    original device when they are accessed.
     """
 
-    def __init__(self, **kwargs: Tensor) -> None:
+    def __init__(self, device: DEVICE = "cpu", **kwargs: Tensor) -> None:
+        self.device = torch.device(device)
         self._state_dict: Dict[str, Tensor] = dict()
         self._devices: Dict[str, torch.device] = dict()
         self.update(**kwargs)
@@ -22,12 +24,18 @@ class StateDictManager(MutableMapping):
     def __getitem__(self, key: str) -> Tensor:
         parameter = self._state_dict[key]
         device = self._devices[key]
+        if self.device.type != "cpu":
+            return parameter
         if device.type == "cpu":
             return parameter
         return parameter.to(device=device, non_blocking=True)
 
     def __setitem__(self, key: str, value: Tensor) -> None:
-        self._state_dict[key] = clone_to_cpu_tensor(value)
+        if self.device.type == "cpu":
+            store_value = clone_to_cpu_tensor(value)
+        else:
+            store_value = value
+        self._state_dict[key] = store_value
         self._devices[key] = value.device
 
     def __delitem__(self, key: str) -> None:

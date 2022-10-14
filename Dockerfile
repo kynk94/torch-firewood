@@ -16,6 +16,7 @@ RUN groupadd --gid ${GID} $USERNAME \
     && apt-get update \
     && $APT_INSTALL \
     sudo \
+    nano \
     dialog \
     apt-utils \
     build-essential \
@@ -34,19 +35,6 @@ RUN groupadd --gid ${GID} $USERNAME \
     && chmod 0440 /etc/sudoers.d/${USERNAME}
 ENV HOME /home/${USERNAME}
 WORKDIR ${HOME}
-
-# SSL config
-ARG CERT_ZIP="[]"
-COPY Dockerfile $CERT_ZIP /tmp/
-RUN if [ ${CERT_ZIP} != "[]" ] && [ ${CERT_ZIP} != "" ]; \
-    then unzip /tmp/"$(basename ${CERT_ZIP})" -d /usr/share/ca-certificates/ \
-    && echo "$(ls -a /usr/share/ca-certificates/ | grep .crt)"  >> /etc/ca-certificates.conf \
-    && update-ca-certificates \
-    && echo "SSL certificates installed"; \
-    fi \
-    && cd /tmp/ && ls -A1 | xargs rm -rf
-ENV PIP_CERT=/etc/ssl/certs/
-
 USER ${USERNAME}
 
 # Install conda

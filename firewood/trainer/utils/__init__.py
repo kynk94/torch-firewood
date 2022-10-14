@@ -3,7 +3,7 @@ from typing import Callable, Optional, Union
 
 from firewood.utils.common import get_last_file
 
-from .data import update_train_batch_size_of_trainer
+from . import cuda, data
 from .state_dict_manager import StateDictManager, extract_state_dict
 
 

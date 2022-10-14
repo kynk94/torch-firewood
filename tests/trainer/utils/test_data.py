@@ -2,7 +2,7 @@ import shutil
 
 import pytest
 
-from firewood.utils import data
+from firewood.trainer.utils import data
 from tests.helpers.utils import gen_params
 
 

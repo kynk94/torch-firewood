@@ -48,6 +48,11 @@ def set_runtime_build(runtime_build: bool) -> bool:
         raise TypeError("runtime_build must be bool")
     global _runtime_build
     _runtime_build = runtime_build
+    if _runtime_build:
+        # prevent circular import
+        from firewood.utils.extensions import CUDAExtension
+
+        CUDAExtension.import_C()
     return _runtime_build
 
 

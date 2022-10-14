@@ -743,7 +743,9 @@ def _load_operation(
     }
 
     conv_operation: Callable[..., Tensor]
-    conv_weight_cudnn_deprecated = utils.is_newer_torch("1.11.0")
+    # conv_weight_cudnn is deprecated in torch 1.11.0
+    # But, grad.convNd_weight has out of memory issue.
+    conv_weight_cudnn_deprecated = False  # utils.is_newer_torch("1.11.0")
     key = "conv"
     if transposed:
         conv_kwargs.update(output_padding=output_padding)

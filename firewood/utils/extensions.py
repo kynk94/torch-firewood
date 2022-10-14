@@ -49,6 +49,8 @@ def load_extension(
     if name in _CACHED_EXTENSIONS:
         return _CACHED_EXTENSIONS[name]
 
+    print("Loading extension...")
+
     if platform.system() == "Windows" and not is_success(
         os.system("where cl.exe >nul 2>nul")
     ):
@@ -74,7 +76,7 @@ def load_extension(
             f"Successfully compiled, but failed to import extension."
         )
 
-    _CACHED_EXTENSIONS[extension_hash] = module
+    _CACHED_EXTENSIONS[name] = module
     return module
 
 
@@ -89,24 +91,28 @@ class CUDAExtension:
     cuda_cflags = ["--use_fast_math"]
 
     @classmethod
-    def available_operations(cls) -> List[str]:
-        if cls.__C is None:
+    def import_C(cls) -> None:
+        if runtime_build():
+            cls.__import_runtime_build()
+        else:
             cls.__import_prebuild()
+
+    @classmethod
+    def available_operations(cls) -> List[str]:
+        cls.import_C()
         return [o for o in dir(cls.__C) if not o.startswith("__")]
 
     @classmethod
     def cache(cls, name: Optional[str] = None) -> Dict[Any, Any]:
-        cls.__set_prebuild(not runtime_build())
+        if runtime_build() and cls.__use_prebuild:
+            cls.__set_prebuild(False)
         if name is None:
             return cls.__cache
         return cls.__cache[name]
 
     @classmethod
     def get(cls, name: str) -> Callable[..., Any]:
-        if runtime_build():
-            cls.__import_runtime_build()
-        else:
-            cls.__import_prebuild()
+        cls.import_C()
         operation = getattr(cls.__C, name, None)
         if operation is None:
             support_operations = ", ".join(cls.available_operations())
@@ -120,7 +126,6 @@ class CUDAExtension:
     def __clear_cache(cls) -> None:
         for value in cls.__cache.values():
             value.clear()
-        print("CUDA extension cache is cleared.")
 
     @classmethod
     def __set_prebuild(cls, use_prebuild: bool) -> None:
@@ -132,10 +137,13 @@ class CUDAExtension:
     def __import_runtime_build(
         cls, cuda_cflags: Optional[List[str]] = None
     ) -> ModuleType:
-        cls.__C = load_extension(
+        _C = load_extension(
             sources=_CUDA_SOURCES,
             extra_cuda_cflags=cuda_cflags or cls.cuda_cflags,
         )
+        if cls.__C is not None and cls.__C != _C:
+            cls.__clear_cache()
+        cls.__C = _C
         cls.__set_prebuild(False)
         return cls.__C
 
@@ -144,6 +152,8 @@ class CUDAExtension:
         try:
             import firewood._C
 
+            if cls.__C is not None and cls.__C != firewood._C:
+                cls.__clear_cache()
             cls.__C = firewood._C
             cls.__set_prebuild(True)
         except (RuntimeError, ModuleNotFoundError):

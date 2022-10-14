@@ -6,7 +6,7 @@ from pytorch_lightning.utilities import rank_zero_only
 from pytorch_lightning.utilities.types import STEP_OUTPUT
 from torch import Tensor
 
-from firewood.common.types import STR
+from firewood.common.types import DEVICE, STR
 from firewood.trainer.utils import StateDictManager
 from firewood.utils import clone_to_cpu_tensor
 
@@ -15,14 +15,18 @@ class ExponentialMovingAverage(Callback):
     """
     Maintains Exponential Moving Average of weights by decay factor.
     The EMA weights are updated after each batch and are used for validation.
-    And stored in CPU memory.
+    If gpu memory is not enough, set `device` as "cpu". Then, the EMA weights
+    stored in CPU memory.
 
     The shadow parameter is updated as:
         shadow_parameter = decay * shadow_parameter + (1 - decay) * parameter
     """
 
     def __init__(
-        self, decay: float = 0.999, target_modules: Optional[STR] = None
+        self,
+        decay: float = 0.999,
+        target_modules: Optional[STR] = None,
+        device: DEVICE = "cuda",
     ):
         super().__init__()
         self.decay = decay
@@ -31,15 +35,19 @@ class ExponentialMovingAverage(Callback):
         elif isinstance(target_modules, Sequence):
             target_modules = tuple(target_modules)
         self.target_modules = target_modules
+        if not torch.cuda.is_available():
+            device = "cpu"
+        self.device = torch.device(device)
 
-        self.original = StateDictManager()
+        self.original = StateDictManager(device=self.device)
         self.shadow: Dict[str, Tensor] = dict()
 
     @torch.no_grad()
     def _parameter_to_shadow(self, name: str, parameter: Tensor) -> None:
-        parameter = clone_to_cpu_tensor(parameter)
+        if self.device.type == "cpu":
+            parameter = parameter.detach().cpu()
         if name not in self.shadow:
-            self.shadow[name] = parameter
+            self.shadow[name] = parameter.clone()
             return
         self.shadow[name] = (
             self.decay * self.shadow[name] + (1 - self.decay) * parameter
