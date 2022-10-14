@@ -512,3 +512,35 @@ def nearest_downsample(input: Tensor, factor: INT) -> Tensor:
     if rank == 3:
         return input[..., :: factor[0], :: factor[1], :: factor[2]]
     raise ValueError("Only 1D, 2D, and 3D downsampling is supported.")
+
+
+def tensor_resize(
+    image: Tensor,
+    size: INT,
+    interpolation: str = "bilinear",
+    max_size: Optional[int] = None,
+    antialias: Optional[bool] = None,
+) -> Tensor:
+    size = normalize_int_tuple(size, 2)
+    if image.size(-1) == size[-1] and image.size(-2) == size[-2]:
+        return image
+    if antialias != True:
+        return TFT.resize(image, size, interpolation, max_size, antialias)
+
+    need_twice = False
+
+    temp_size = []
+    for target, original in zip(size, image.shape[2:]):
+        ratio = float(target) / float(original)
+        if ratio < 0.01:
+            need_twice = True
+            temp_size.append(target * 10)
+        else:
+            temp_size.append(target)
+    if not need_twice:
+        return TFT.resize(image, size, interpolation, max_size, antialias)
+
+    temp_image = TFT.resize(
+        image, temp_size, interpolation, max_size, antialias
+    )
+    return TFT.resize(temp_image, size, interpolation, max_size, antialias)
