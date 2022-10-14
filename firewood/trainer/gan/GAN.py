@@ -18,7 +18,7 @@ from firewood.trainer.callbacks import (
 )
 from firewood.trainer.losses import gan_loss
 from firewood.trainer.metrics import FrechetInceptionDistance
-from firewood.utils.data import (
+from firewood.trainer.utils.data import (
     get_dataloaders,
     get_train_val_test_datasets,
     torchvision_train_val_test_datasets,
@@ -212,9 +212,7 @@ def main():
         callbacks=callbacks,
         strategy="ddp" if gpus > 1 else None,
     )
-    trainer.logger = TensorBoardLogger(
-        trainer.default_root_dir, default_hp_metric=False
-    )
+    trainer.logger._default_hp_metric = False
     trainer.fit(
         gan,
         train_dataloaders=train_dataloader,

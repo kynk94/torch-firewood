@@ -19,7 +19,7 @@ from firewood.trainer.callbacks import (
 from firewood.trainer.losses import lsgan_loss
 from firewood.trainer.metrics import FrechetInceptionDistance
 from firewood.trainer.utils import find_checkpoint
-from firewood.utils.data import (
+from firewood.trainer.utils.data import (
     NoClassImageFolder,
     get_dataloaders,
     get_train_val_test_datasets,
@@ -245,9 +245,7 @@ def main():
         callbacks=callbacks,
         strategy="ddp" if gpus > 1 else None,
     )
-    trainer.logger = TensorBoardLogger(
-        trainer.default_root_dir, default_hp_metric=False
-    )
+    trainer.logger._default_hp_metric = False
     trainer.fit(
         lsgan,
         train_dataloaders=train_dataloader,
