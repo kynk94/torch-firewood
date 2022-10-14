@@ -55,7 +55,9 @@ class ModelCheckpoint(_ModelCheckpoint):
 
     def _log_interval_minutes(self, pl_module: pl.LightningModule) -> None:
         interval_minutes = (time.monotonic() - self.initial_time) / 60
-        pl_module.log(_MINUTE_LOG_NAME, interval_minutes, on_step=True)
+        pl_module.log(
+            _MINUTE_LOG_NAME, interval_minutes, on_step=True, sync_dist=True
+        )
 
     def on_train_batch_end(
         self,
