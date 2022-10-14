@@ -8,8 +8,7 @@ services:
       dockerfile: Dockerfile
       args:
         PYTHON_VERSION: 3.9
-        # CERT_ZIP: CERT.zip
-        DEFAULT_SHELL: bash
+        DEFAULT_SHELL: zsh
         USE_JUPYTER: "false"
         BUILD: "true"
     ipc: host
