@@ -35,7 +35,7 @@ from firewood.trainer.utils.data import (
     NoClassImageFolder,
     get_train_val_test_datasets,
     torchvision_train_val_test_datasets,
-    update_train_dataloader_of_trainer,
+    update_dataloader_of_trainer,
 )
 from firewood.utils.image import tensor_resize
 
@@ -164,8 +164,10 @@ class StyleGAN(pl.LightningModule):
         return log_dict
 
     def on_train_start(self) -> None:
-        update_train_dataloader_of_trainer(
-            self.trainer, resolution=self.hparams.initial_resolution
+        update_dataloader_of_trainer(
+            self.trainer,
+            target="train/val",
+            resolution=self.hparams.initial_resolution,
         )
         if self.global_rank != 0 or self.device.type != "cuda":
             return
@@ -325,8 +327,11 @@ class StyleGAN(pl.LightningModule):
         d_scheduler.update(total_minibatch_size)
         if g_scheduler.resolution != self.current_resolution:
             next_batch_size = self.calculate_batch_size(g_scheduler.resolution)
-            update_train_dataloader_of_trainer(
-                self.trainer, next_batch_size, g_scheduler.resolution
+            update_dataloader_of_trainer(
+                self.trainer,
+                target="train/val",
+                batch_size=next_batch_size,
+                resolution=g_scheduler.resolution,
             )
         self.current_resolution = g_scheduler.resolution
 
