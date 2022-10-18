@@ -11,11 +11,7 @@ from torchvision import transforms
 
 from firewood.common.backend import set_runtime_build, set_seed
 from firewood.common.types import NUMBER
-from firewood.models.gan.StyleGAN import (
-    Discriminator,
-    MappingNetwork,
-    SynthesisNetwork,
-)
+from firewood.models.gan.StyleGAN import Discriminator, Generator
 from firewood.trainer.callbacks import (
     ExponentialMovingAverage,
     LatentDimInterpolator,
@@ -47,7 +43,6 @@ class StyleGAN(pl.LightningModule):
         label_dim: int = 0,
         style_dim: int = 512,
         max_channels: int = 512,
-        initial_input_type: str = "constant",
         activation: str = "lrelu",
         noise: str = "normal",
         fir: NUMBER = [1, 2, 1],
@@ -67,25 +62,19 @@ class StyleGAN(pl.LightningModule):
         self.automatic_optimization = False
 
         self.current_resolution = initial_resolution
-        self.mapping = MappingNetwork(
+        self.generator = Generator(
             latent_dim=latent_dim,
             label_dim=label_dim,
             style_dim=style_dim,
-            activation=activation,
-            lr_equalization=lr_equalization,
-            lr_multiplier=0.01,
-        )
-        self.synthesis = SynthesisNetwork(
-            style_dim=style_dim,
             max_channels=max_channels,
-            initial_input_type=initial_input_type,
             activation=activation,
             noise=noise,
             fir=fir,
             resolution=resolution,
             image_channels=image_channels,
             lr_equalization=lr_equalization,
-            lr_multiplier=1.0,
+            mapping_lr_multiplier=0.01,
+            synthesis_lr_multiplier=1.0,
         )
         self.discriminator = Discriminator(
             label_dim=label_dim,
@@ -103,11 +92,15 @@ class StyleGAN(pl.LightningModule):
         self.fid = FrechetInceptionDistance()
 
     def forward(
-        self, input: Tensor, resolution: Optional[int] = None
+        self,
+        input: Tensor,
+        truncation: float = 0.7,
+        resolution: Optional[int] = None,
     ) -> Tensor:
-        style = self.mapping(input)
-        return self.synthesis(
-            style, resolution=resolution or self.current_resolution
+        return self.generator(
+            input,
+            truncation=truncation,
+            resolution=resolution or self.current_resolution,
         )
 
     def generate_latent(self, batch_size: int) -> Tensor:
@@ -116,23 +109,32 @@ class StyleGAN(pl.LightningModule):
         )
 
     def generator_step(
-        self, input: Tensor, alpha: float = 1.0, resolution: int = 1024
+        self,
+        input: Tensor,
+        truncation: float = 0.7,
+        alpha: float = 1.0,
+        resolution: int = 1024,
     ) -> Dict[str, Tensor]:
         latent = self.generate_latent(input.size(0))
-        style: Tensor = self.mapping(latent)
-        generated_image: Tensor = self.synthesis(style, alpha, resolution)
+        generated_image: Tensor = self.generator(
+            latent, truncation=truncation, alpha=alpha, resolution=resolution
+        )
         score_fake: Tensor = self.discriminator(generated_image)
         loss = logistic_nonsaturating_loss(score_fake, True)
         return {"loss/gen": loss}
 
     def discriminator_step(
-        self, input: Tensor, alpha: float = 1.0
+        self, input: Tensor, truncation: float = 0.7, alpha: float = 1.0
     ) -> Dict[str, Tensor]:
         resolution = input.size(-1)
         latent = self.generate_latent(input.size(0))
         with torch.no_grad():
-            style: Tensor = self.mapping(latent)
-            generated_image: Tensor = self.synthesis(style, alpha, resolution)
+            generated_image: Tensor = self.generator(
+                latent,
+                truncation=truncation,
+                alpha=alpha,
+                resolution=resolution,
+            )
         if self.hparams.r1_gamma != 0.0:
             input.requires_grad = True
         score_real: Tensor = self.discriminator(input)
@@ -166,6 +168,7 @@ class StyleGAN(pl.LightningModule):
         return log_dict
 
     def training_step(self, batch: Tuple[Tensor, ...], batch_idx: int) -> None:
+        truncation = 0.7
         real_images, _ = batch
         mbstd_group = min(real_images.size(0), self.hparams.mbstd_group)
         remainder = real_images.size(0) % mbstd_group
@@ -177,13 +180,15 @@ class StyleGAN(pl.LightningModule):
 
         gen_optimizer, dis_optimizer = self.optimizers()
 
-        dis_log_dict = self.discriminator_step(real_images, alpha)
+        dis_log_dict = self.discriminator_step(real_images, truncation, alpha)
         dis_loss = dis_log_dict.pop("loss/dis")
         dis_optimizer.zero_grad()
         self.manual_backward(dis_loss)
         dis_optimizer.step()
 
-        gen_log_dict = self.generator_step(real_images, alpha, resolution)
+        gen_log_dict = self.generator_step(
+            real_images, truncation, alpha, resolution
+        )
         gen_loss = gen_log_dict.pop("loss/gen")
         gen_optimizer.zero_grad()
         self.manual_backward(gen_loss)
@@ -221,8 +226,9 @@ class StyleGAN(pl.LightningModule):
         real_images = tensor_resize(real_images, resolution, antialias=True)
 
         latent = self.generate_latent(real_images.size(0))
-        style = self.mapping(latent)
-        generated_image = self.synthesis(style, resolution=resolution)
+        generated_image: Tensor = self.generator(
+            latent, truncation=0.7, resolution=resolution
+        )
         score_fake: Tensor = self.discriminator(generated_image)
         score_real: Tensor = self.discriminator(real_images)
 
@@ -253,11 +259,11 @@ class StyleGAN(pl.LightningModule):
     def configure_optimizers(self) -> Tuple[Any]:
         lr = self.hparams.learning_rate
         generator_optimizer = torch.optim.Adam(
-            self.synthesis.parameters(), lr=lr, betas=(0.0, 0.999)
+            self.generator.synthesis.parameters(), lr=lr, betas=(0.0, 0.999)
         )
         generator_optimizer.add_param_group(
             {
-                "params": self.mapping.parameters(),
+                "params": self.generator.mapping.parameters(),
                 "lr": lr,
                 "betas": (0.0, 0.999),
             }
@@ -334,8 +340,8 @@ class StyleGAN(pl.LightningModule):
                 images = torch.randn(
                     batch_size, 3, resolution, resolution, device=self.device
                 )
-                self.discriminator_step(images, 0.5)
-                self.generator_step(images, 0.5, resolution)
+                self.discriminator_step(images, 0.7, 0.5)
+                self.generator_step(images, 0.7, 0.5, resolution)
                 print_cuda_memory(images)
             del images
             torch.cuda.empty_cache()
@@ -416,7 +422,6 @@ def main():
             label_dim=0,
             style_dim=512,
             max_channels=512,
-            initial_input_type="constant",
             activation="lrelu",
             noise="normal",
             fir=[1, 2, 1],

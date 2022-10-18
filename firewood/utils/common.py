@@ -15,11 +15,46 @@ from typing import (
     overload,
 )
 
+from numpy import ndarray
 from packaging.version import Version
 from pkg_resources import get_distribution
 from torch import Tensor
 
-from firewood.common.types import INT, STR
+from firewood.common.types import INT, NUMBER, STR
+
+
+@overload
+def clamp(input: float, _min: float, _max: float) -> float:
+    ...
+
+
+@overload
+def clamp(input: Sequence[float], _min: float, _max: float) -> Sequence[float]:
+    ...
+
+
+@overload
+def clamp(
+    input: ndarray, _min: Union[float, ndarray], _max: Union[float, ndarray]
+) -> ndarray:
+    ...
+
+
+@overload
+def clamp(
+    input: Tensor, _min: Union[float, Tensor], _max: Union[float, Tensor]
+) -> Tensor:
+    ...
+
+
+def clamp(input: NUMBER, _min: Any, _max: Any) -> NUMBER:
+    if isinstance(input, float):
+        return max(_min, min(input, _max))
+    if isinstance(input, Sequence):
+        return type(input)(clamp(i, _min, _max) for i in input)  # type: ignore
+    if isinstance(input, ndarray):
+        return input.clip(_min, _max)
+    return input.clamp(_min, _max)
 
 
 def is_newer_torch(version: Union[str, int, float]) -> bool:
