@@ -49,6 +49,8 @@ class LatentImageSampler(_ImageCallback):
         pl_module: LightningModule,
         title: Optional[str] = None,
     ) -> None:
+        if trainer.global_rank != 0:
+            return
         title = title or "images"
 
         dim = (self.num_samples, getattr(pl_module.hparams, "latent_dim"))
@@ -148,6 +150,8 @@ class ConditionImageSampler(_ImageCallback):
         fixed_batch: Optional[Any] = None,
         title: Optional[str] = None,
     ) -> None:
+        if trainer.global_rank != 0:
+            return
         title = title or "images"
         source_images, conditions = batch[:2]
         source_images: Tensor = source_images[: self.num_samples]
@@ -175,6 +179,8 @@ class ConditionImageSampler(_ImageCallback):
     def on_train_epoch_end(
         self, trainer: Trainer, pl_module: LightningModule
     ) -> None:
+        if trainer.global_rank != 0:
+            return
         if trainer.current_epoch % self.epoch != 0:
             return
         self.forward(
@@ -188,6 +194,8 @@ class ConditionImageSampler(_ImageCallback):
     def on_validation_epoch_end(
         self, trainer: Trainer, pl_module: LightningModule
     ) -> None:
+        if trainer.global_rank != 0:
+            return
         if trainer.sanity_checking or trainer.current_epoch % self.epoch != 0:
             return
         self.forward(
@@ -207,6 +215,8 @@ class ConditionImageSampler(_ImageCallback):
         batch_idx: int,
     ) -> None:
         if self.step is None:
+            return
+        if trainer.global_rank != 0:
             return
         if trainer.global_step == 0 or trainer.global_step % self.step != 0:
             return
@@ -228,6 +238,8 @@ class ConditionImageSampler(_ImageCallback):
         dataloader_idx: int,
     ) -> None:
         if trainer.sanity_checking or self.step is None:
+            return
+        if trainer.global_rank != 0:
             return
         if trainer.global_step == 0 or trainer.global_step % self.step != 0:
             return
@@ -281,6 +293,8 @@ class I2ISampler(_ImageCallback):
         fixed_batch: Optional[Any] = None,
         title: Optional[str] = None,
     ) -> None:
+        if trainer.global_rank != 0:
+            return
         title = title or "images"
         source_images, target_images = batch[:2]
         source_images: Tensor = source_images[: self.num_samples]
@@ -309,6 +323,8 @@ class I2ISampler(_ImageCallback):
     def on_train_epoch_end(
         self, trainer: Trainer, pl_module: LightningModule
     ) -> None:
+        if trainer.global_rank != 0:
+            return
         if trainer.current_epoch % self.epoch != 0:
             return
         self.forward(
@@ -322,6 +338,8 @@ class I2ISampler(_ImageCallback):
     def on_validation_epoch_end(
         self, trainer: Trainer, pl_module: LightningModule
     ) -> None:
+        if trainer.global_rank != 0:
+            return
         if trainer.sanity_checking or trainer.current_epoch % self.epoch != 0:
             return
         self.forward(
@@ -341,6 +359,8 @@ class I2ISampler(_ImageCallback):
         batch_idx: int,
     ) -> None:
         if self.step is None:
+            return
+        if trainer.global_rank != 0:
             return
         if trainer.global_step == 0 or trainer.global_step % self.step != 0:
             return
@@ -362,6 +382,8 @@ class I2ISampler(_ImageCallback):
         dataloader_idx: int,
     ) -> None:
         if trainer.sanity_checking or self.step is None:
+            return
+        if trainer.global_rank != 0:
             return
         if trainer.global_step == 0 or trainer.global_step % self.step != 0:
             return

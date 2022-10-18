@@ -1,5 +1,5 @@
 from collections.abc import MutableMapping
-from typing import Any, Dict, Iterable
+from typing import Any, Dict, Iterable, Optional
 
 import torch
 from torch import Tensor
@@ -15,8 +15,10 @@ class StateDictManager(MutableMapping):
     original device when they are accessed.
     """
 
-    def __init__(self, device: DEVICE = "cpu", **kwargs: Tensor) -> None:
-        self.device = torch.device(device)
+    def __init__(
+        self, device: Optional[DEVICE] = None, **kwargs: Tensor
+    ) -> None:
+        self.device = torch.device(device or "cpu")
         self._state_dict: Dict[str, Tensor] = dict()
         self._devices: Dict[str, torch.device] = dict()
         self.update(**kwargs)
@@ -34,7 +36,7 @@ class StateDictManager(MutableMapping):
         if self.device.type == "cpu":
             store_value = clone_to_cpu_tensor(value)
         else:
-            store_value = value
+            store_value = value.detach().clone()
         self._state_dict[key] = store_value
         self._devices[key] = value.device
 

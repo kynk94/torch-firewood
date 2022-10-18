@@ -16,7 +16,7 @@ class LatentDimInterpolator(_ImageCallback):
     """
     LatentDimInterpolator
 
-    Unlike the original implementation, store output images on the CPU.
+    Unlike the original implementation, store output images to the CPU memory.
     """
 
     def __init__(
@@ -108,6 +108,8 @@ class LatentDimInterpolator(_ImageCallback):
         pl_module: LightningModule,
         title: Optional[str] = None,
     ) -> None:
+        if trainer.global_rank != 0:
+            return
         title = title or "interpolation"
         latent_dim = getattr(pl_module.hparams, "latent_dim", None)
         if latent_dim is None:
@@ -118,26 +120,17 @@ class LatentDimInterpolator(_ImageCallback):
         pl_module.eval()
         for z_x in np.linspace(*self.latent_range, num=self.nrow):
             for z_y in np.linspace(*self.latent_range, num=self.nrow):
-                # set all dims to zero
                 z = torch.zeros(1, latent_dim, device=pl_module.device)
-
-                # set the dim to interpolate
-
                 div, mod = divmod(ndim_to_interpolate, 2)
                 z[:, : div + mod] = torch.tensor(z_x)
                 z[:, -div:] = torch.tensor(z_y)
-
-                # sample
-                # generate images
                 img: Tensor = pl_module(z)
-
                 if len(img.size()) == 2:
                     img_dim = getattr(pl_module, "img_dim", None)
                     if img_dim is None:
                         img = batch_flat_to_square(img)
                     else:
                         img = img.view(-1, *img_dim)
-
                 images.append(img.detach().cpu())
         pl_module.train()
 
@@ -260,6 +253,8 @@ class ConditionInterpolator(_ImageCallback):
         pl_module: LightningModule,
         title: Optional[str] = None,
     ) -> None:
+        if trainer.global_rank != 0:
+            return
         title = title or "interpolation"
         if self.conditions_base is None:
             condition_dim = search_attr(

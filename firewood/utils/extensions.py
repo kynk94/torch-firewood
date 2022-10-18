@@ -49,7 +49,7 @@ def load_extension(
     if name in _CACHED_EXTENSIONS:
         return _CACHED_EXTENSIONS[name]
 
-    print("Loading extension...")
+    print("Loading CPP extension...")
 
     if platform.system() == "Windows" and not is_success(
         os.system("where cl.exe >nul 2>nul")

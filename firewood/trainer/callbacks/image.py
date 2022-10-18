@@ -6,7 +6,6 @@ import torch
 import torchvision.transforms.functional_tensor as TFT
 import torchvision.utils as TU
 from pytorch_lightning import Callback, LightningModule, Trainer
-from pytorch_lightning.utilities import rank_zero_only
 from torch import Tensor
 from torch.utils.data import DataLoader
 
@@ -129,7 +128,6 @@ class _ImageCallback(Callback):
         new_resolution = (int(height * ratio), int(width * ratio))
         return TFT.resize(grid, new_resolution, antialias=True)
 
-    @rank_zero_only
     def log_image(
         self,
         trainer: Trainer,
@@ -138,6 +136,8 @@ class _ImageCallback(Callback):
         title: Optional[str] = None,
         global_step: Optional[int] = None,
     ) -> None:
+        if trainer.global_rank != 0:
+            return
         title = title or "images"
         str_title = f"{pl_module.__class__.__name__}_{title}"
         global_step = global_step or trainer.global_step

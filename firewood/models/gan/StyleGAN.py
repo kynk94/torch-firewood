@@ -286,7 +286,8 @@ class SynthesisNetwork(nn.Module):
         """
         Args:
             input: style vector (w)
-            alpha: interpolation factor of progressive growing
+            alpha: interpolation factor of progressive growing, increase
+                from 0 to 1 during new phase.
             resolution: resolution of output image
         """
         if resolution is None:
@@ -308,7 +309,7 @@ class SynthesisNetwork(nn.Module):
                 upsampled_lower_image = utils.image.upsample(
                     lower_image, factor=2, mode="nearest"
                 )
-                image = (1.0 - alpha) * upsampled_lower_image + alpha * image
+                image = alpha * image + (1.0 - alpha) * upsampled_lower_image
             output = image
             break
         return output
@@ -404,7 +405,7 @@ class ConvConvDownBlock(nn.Module):
 
 
 class Discriminator(nn.Module):
-    last_resolution = 4
+    initial_resolution = 4
 
     def __init__(
         self,
@@ -491,7 +492,8 @@ class Discriminator(nn.Module):
         """
         Args:
             input: (batch_size, image_channels, resolution, resolution)
-            alpha: interpolation factor of progressive growing
+            alpha: interpolation factor of progressive growing, increase
+                from 0 to 1 during new phase.
         """
         resolution = input.size(-1)
 
@@ -500,13 +502,13 @@ class Discriminator(nn.Module):
             current_resolution = 2 ** (i + 2)
             output = self.layers[str(current_resolution)](output)
             if (
-                current_resolution == resolution > self.last_resolution
+                current_resolution == resolution > self.initial_resolution
                 and 0.0 <= alpha < 1.0
             ):
                 lower_output = self.from_images[str(resolution // 2)](
                     utils.image.nearest_downsample(input, 2)
                 )
-                output = (1.0 - alpha) * lower_output + alpha * output
+                output = alpha * output + (1.0 - alpha) * lower_output
         output = self.layers["last"](output)
         if label is not None:
             output = (output * label).sum(dim=1, keepdim=True)

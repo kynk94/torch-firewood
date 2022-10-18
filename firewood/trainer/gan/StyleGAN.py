@@ -157,32 +157,13 @@ class StyleGAN(pl.LightningModule):
         log_dict.update(
             {
                 "loss/dis": loss,
+                "loss/dis_real": loss_real,
+                "loss/dis_fake": loss_fake,
                 "score/real": score_real.mean(),
                 "score/fake": score_fake.mean(),
             }
         )
         return log_dict
-
-    def on_train_start(self) -> None:
-        update_dataloader_of_trainer(
-            self.trainer,
-            target="train/val",
-            resolution=self.hparams.initial_resolution,
-        )
-        if self.global_rank != 0 or self.device.type != "cuda":
-            return
-
-        init_phase = math.log2(self.hparams.initial_resolution)
-        last_phase = math.log2(self.hparams.resolution)
-        for phase in range(int(init_phase), int(last_phase) + 1):
-            resolution = 2**phase
-            batch_size = self.calculate_batch_size(resolution)
-            images = torch.randn(
-                batch_size, 3, resolution, resolution, device=self.device
-            )
-            self.discriminator_step(images, 1.0)
-            self.generator_step(images, 1.0, resolution)
-            print_cuda_memory(images)
 
     def training_step(self, batch: Tuple[Tensor, ...], batch_idx: int) -> None:
         real_images, _ = batch
@@ -227,20 +208,21 @@ class StyleGAN(pl.LightningModule):
         self, batch: Tensor, batch_idx: int
     ) -> Dict[str, Tensor]:
         real_images, _ = batch
+        if self.trainer.sanity_checking:
+            resolution = self.hparams.resolution
+            real_images = real_images[: self.calculate_batch_size(resolution)]
+        else:
+            resolution = self.current_resolution
         mbstd_group = min(real_images.size(0), self.hparams.mbstd_group)
         remainder = real_images.size(0) % mbstd_group
         if remainder != 0:
             real_images = real_images[:-remainder]
 
-        real_images = tensor_resize(
-            real_images, self.current_resolution, antialias=True
-        )
+        real_images = tensor_resize(real_images, resolution, antialias=True)
 
         latent = self.generate_latent(real_images.size(0))
         style = self.mapping(latent)
-        generated_image = self.synthesis(
-            style, resolution=self.current_resolution
-        )
+        generated_image = self.synthesis(style, resolution=resolution)
         score_fake: Tensor = self.discriminator(generated_image)
         score_real: Tensor = self.discriminator(real_images)
 
@@ -317,7 +299,7 @@ class StyleGAN(pl.LightningModule):
         )
 
     def calculate_batch_size(self, resolution: int) -> int:
-        scale = min(resolution / self.hparams.initial_resolution, 8)
+        scale = min(resolution / self.hparams.initial_resolution, 16)
         return max(2, int(self.hparams.initial_batch_size / scale))
 
     def update_scheduler(self, batch_size: int) -> None:
@@ -342,6 +324,28 @@ class StyleGAN(pl.LightningModule):
         g_scheduler, d_scheduler = self.lr_schedulers()
         return g_scheduler.alpha, g_scheduler.resolution
 
+    def on_train_start(self) -> None:
+        if self.global_rank == 0 and self.device.type == "cuda":
+            init_phase = math.log2(self.hparams.initial_resolution)
+            last_phase = math.log2(self.hparams.resolution)
+            for phase in range(int(init_phase), int(last_phase) + 1):
+                resolution = 2**phase
+                batch_size = self.calculate_batch_size(resolution)
+                images = torch.randn(
+                    batch_size, 3, resolution, resolution, device=self.device
+                )
+                self.discriminator_step(images, 0.5)
+                self.generator_step(images, 0.5, resolution)
+                print_cuda_memory(images)
+            del images
+            torch.cuda.empty_cache()
+
+        update_dataloader_of_trainer(
+            self.trainer,
+            target="train/val",
+            resolution=self.hparams.initial_resolution,
+        )
+
 
 def main():
     # fmt: off
@@ -356,7 +360,7 @@ def main():
     step_group.add_argument("--step", "-s", type=int, default=-1)
     parser.add_argument("--checkpoint", "-ckpt", type=str, default=None)
     parser.add_argument("--resolution", "-r", type=int, default=1024)
-    parser.add_argument("--batch_size", "-b", type=int, default=256)
+    parser.add_argument("--batch_size", "-b", type=int, default=64)
     parser.add_argument("--latent_dim", "-l", type=int, default=512)
     parser.add_argument("--learning_rate", "-lr", type=float, default=1e-3)
     parser.add_argument("--runtime_build", "-rb", action="store_true")

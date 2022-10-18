@@ -2,13 +2,12 @@ from typing import Any, Dict, Optional, Sequence
 
 import torch
 from pytorch_lightning import Callback, LightningModule, Trainer
-from pytorch_lightning.utilities import rank_zero_only
 from pytorch_lightning.utilities.types import STEP_OUTPUT
 from torch import Tensor
 
 from firewood.common.types import DEVICE, STR
 from firewood.trainer.utils import StateDictManager
-from firewood.utils import clone_to_cpu_tensor
+from firewood.utils import args_to
 
 
 class ExponentialMovingAverage(Callback):
@@ -26,7 +25,7 @@ class ExponentialMovingAverage(Callback):
         self,
         decay: float = 0.999,
         target_modules: Optional[STR] = None,
-        device: DEVICE = "cuda",
+        device: Optional[DEVICE] = None,
     ):
         super().__init__()
         self.decay = decay
@@ -35,9 +34,7 @@ class ExponentialMovingAverage(Callback):
         elif isinstance(target_modules, Sequence):
             target_modules = tuple(target_modules)
         self.target_modules = target_modules
-        if not torch.cuda.is_available():
-            device = "cpu"
-        self.device = torch.device(device)
+        self.device = torch.device(device) if device is not None else None
 
         self.original = StateDictManager(device=self.device)
         self.shadow: Dict[str, Tensor] = dict()
@@ -53,14 +50,16 @@ class ExponentialMovingAverage(Callback):
             self.decay * self.shadow[name] + (1 - self.decay) * parameter
         )
 
-    @rank_zero_only
     def on_train_start(
         self, trainer: Trainer, pl_module: LightningModule
     ) -> None:
-        for name, param in pl_module.named_parameters():
-            self._parameter_to_shadow(name, param)
+        if trainer.global_rank != 0:
+            return
+        if self.device is None:
+            self.device = self.original.device = pl_module.device
+        for name, parameter in pl_module.named_parameters():
+            self._parameter_to_shadow(name, parameter)
 
-    @rank_zero_only
     def on_train_batch_end(
         self,
         trainer: Trainer,
@@ -69,6 +68,8 @@ class ExponentialMovingAverage(Callback):
         batch: Any,
         batch_idx: int,
     ) -> None:
+        if trainer.global_rank != 0:
+            return
         if self.target_modules is None:
             for name, parameter in pl_module.named_parameters():
                 self._parameter_to_shadow(name, parameter)
@@ -80,22 +81,28 @@ class ExponentialMovingAverage(Callback):
     def on_validation_start(
         self, trainer: Trainer, pl_module: LightningModule
     ) -> None:
-        if not self.shadow:
+        if trainer.sanity_checking:
             return
 
         self.original.update(pl_module.state_dict())
+        self.shadow = trainer.strategy.broadcast(self.shadow, src=0)
         pl_module.load_state_dict(self.shadow, strict=False)
+        if trainer.global_rank > 0:
+            self.shadow.clear()
 
     def on_validation_end(
         self, trainer: Trainer, pl_module: LightningModule
     ) -> None:
-        if not self.shadow:
+        if trainer.sanity_checking:
             return
 
         pl_module.load_state_dict(self.original, strict=False)
+        self.original.clear()
 
     def state_dict(self) -> Dict[str, Tensor]:
-        return self.shadow
+        return {k: args_to(v, device="cpu") for k, v in self.shadow.items()}
 
     def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
-        self.shadow = state_dict
+        self.shadow = {
+            k: args_to(v, device=self.device) for k, v in state_dict.items()
+        }

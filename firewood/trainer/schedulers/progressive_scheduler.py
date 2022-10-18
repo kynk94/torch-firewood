@@ -1,3 +1,4 @@
+import math
 from typing import Dict, Tuple
 
 from torch.optim import Optimizer
@@ -33,6 +34,9 @@ class ProgressiveScheduler(_LRScheduler):
         self.ramp_up_epoch = ramp_up_epoch
         self.lr_dict = lr_dict
 
+        self.max_phase = int(
+            math.log2(self.max_resolution / self.initial_resolution)
+        )
         self.viewed_key_images = 0
         self.phase = 0
         self.alpha = 1.0
@@ -42,28 +46,31 @@ class ProgressiveScheduler(_LRScheduler):
 
     def update(self, viewed_key_images: int) -> None:
         """
-        key_images: new phase            level_epoch                  fade_epoch
-        alpha:      1 ----------------- decrease start ----------------------- 0
+        Update the scheduler state.
+
+        Unlike the official implementation, intuitively designed to increase
+        the alpha from 0 to 1 during fade epoch.
+
+        key_images:    new phase         fade_epoch done        level_epoch done
+        alpha:      increase from 0 ----------- 1 -------------------- 1
+        resolution:        n  ----------------- n ------------------ 2 * n
         """
         self.viewed_key_images += viewed_key_images
-        if self.resolution == self.max_resolution:
-            return
 
-        level_key_images = int(self.dataset_size * self.level_epoch)
         fade_key_images = int(self.dataset_size * self.fade_epoch)
-        phase_key_images = level_key_images + fade_key_images
+        level_key_images = int(self.dataset_size * self.level_epoch)
+        phase_key_images = fade_key_images + level_key_images
         phase, phase_viewed_images = divmod(
             self.viewed_key_images, phase_key_images
         )
-        alpha = 1.0
-        if phase_viewed_images > level_key_images:
-            alpha -= (phase_viewed_images - level_key_images) / fade_key_images
-
-        resolution = min(
-            int(self.initial_resolution * 2**phase), self.max_resolution
-        )
-        if resolution == self.max_resolution:
+        if phase == 0:
             alpha = 1.0
+        elif phase > self.max_phase:
+            alpha = 1.0
+            phase = self.max_phase
+        else:
+            alpha = min(phase_viewed_images / fade_key_images, 1.0)
+        resolution = int(self.initial_resolution * 2**phase)
 
         self.phase = phase
         self.alpha = alpha
