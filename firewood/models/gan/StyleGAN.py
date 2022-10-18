@@ -113,19 +113,17 @@ class InitialBlock(nn.Module):
         bias: bool = True,
         activation: str = "lrelu",
         noise: Optional[str] = "normal",
-        trainable_input: bool = False,
     ) -> None:
         super().__init__()
         self.style_dim = style_dim
         self.in_channels = in_channels
         self.initial_resolution = initial_resolution
         self.input = nn.Parameter(
-            torch.randn(
+            torch.ones(
                 self.in_channels,
                 self.initial_resolution,
                 self.initial_resolution,
-            ),
-            requires_grad=trainable_input,
+            )
         )
         if bias:
             self.bias = nn.Parameter(torch.zeros(self.in_channels))
@@ -243,7 +241,14 @@ class SynthesisNetwork(nn.Module):
                     decay=self.channels_decay,
                 )
                 out_channels = in_channels
-                self.layers["initial"] = self._get_initial_block(in_channels)
+                self.layers["initial"] = InitialBlock(
+                    style_dim=self.style_dim,
+                    in_channels=in_channels,
+                    initial_resolution=self.initial_resolution,
+                    bias=True,
+                    activation=activation,
+                    noise=noise,
+                )
                 block = layers.Conv2dBlock(
                     in_channels, out_channels, op_order="WAN", **conv_kwargs
                 )
@@ -309,7 +314,7 @@ class SynthesisNetwork(nn.Module):
                 upsampled_lower_image = utils.image.upsample(
                     lower_image, factor=2, mode="nearest"
                 )
-                image = alpha * image + (1.0 - alpha) * upsampled_lower_image
+                image = torch.lerp(upsampled_lower_image, image, alpha)
             output = image
             break
         return output
@@ -338,21 +343,6 @@ class SynthesisNetwork(nn.Module):
             )
         return resolution
 
-    def _get_initial_block(self, in_channels: int) -> nn.Module:
-        kwargs = dict(
-            in_channels=in_channels,
-            style_dim=self.style_dim,
-            initial_resolution=self.initial_resolution,
-        )
-        if self.initial_input_type == "constant":
-            return InitialBlock(trainable_input=False, **kwargs)
-        if self.initial_input_type == "trainable":
-            return InitialBlock(trainable_input=True, **kwargs)
-        raise ValueError(
-            "Currently one of {'constant', 'trainable'} is supported as "
-            f"`initial_input_type`. Received {self.initial_input_type}"
-        )
-
     def reduce_model_for_inference(self) -> None:
         """
         Remove all `to_images` except the last one.
@@ -363,6 +353,78 @@ class SynthesisNetwork(nn.Module):
         for name in self.to_images.keys():
             if name != str(self.resolution):
                 del self.to_images[name]
+
+
+# ------------------------------------------------------------------------------
+class Generator(nn.Module):
+    def __init__(
+        self,
+        latent_dim: int = 512,
+        label_dim: int = 0,
+        style_dim: int = 512,
+        max_channels: int = 512,
+        activation: str = "lrelu",
+        noise: Optional[str] = "normal",
+        fir: NUMBER = [1, 2, 1],
+        resolution: int = 1024,
+        image_channels: int = 3,
+        truncation_cutoff: int = 8,
+        style_avg_beta: Optional[float] = 0.995,
+        style_mixing_probability: Optional[float] = 0.9,
+        lr_equalization: bool = True,
+        mapping_lr_multiplier: float = 0.01,
+        synthesis_lr_multiplier: float = 1.0,
+    ) -> None:
+        super().__init__()
+        self.mapping = MappingNetwork(
+            latent_dim=latent_dim,
+            label_dim=label_dim,
+            style_dim=style_dim,
+            activation=activation,
+            lr_equalization=lr_equalization,
+            lr_multiplier=mapping_lr_multiplier,
+        )
+        self.synthesis = SynthesisNetwork(
+            style_dim=style_dim,
+            max_channels=max_channels,
+            activation=activation,
+            noise=noise,
+            fir=fir,
+            resolution=resolution,
+            image_channels=image_channels,
+            lr_equalization=lr_equalization,
+            lr_multiplier=synthesis_lr_multiplier,
+        )
+
+        self.truncation_cutoff = truncation_cutoff
+        self.style_avg_beta = style_avg_beta
+        self.style_mixing_probability = style_mixing_probability
+        self.register_buffer("style_mean", torch.zeros(1, style_dim))
+
+    def forward(
+        self,
+        input: Tensor,
+        label: Optional[Tensor] = None,
+        truncation: Optional[float] = 0.7,
+        alpha: float = 1.0,
+        resolution: Optional[int] = None,
+    ) -> Tensor:
+        truncation = max(0.0, min(truncation, 1.0))
+
+        style: Tensor = self.mapping(input, label)
+        if self.style_avg_beta is not None:
+            self.style_mean.copy_(
+                torch.lerp(
+                    style.mean(0, keepdim=True),
+                    self.style_mean,
+                    self.style_avg_beta,
+                )
+            )
+        if truncation is not None and self.truncation_cutoff is not None:
+            layer_index = torch.arange(self.synthesis.n_layers)
+            # TODO
+        image = self.synthesis(style, alpha, resolution)
+        return image
 
 
 # ------------------------------------------------------------------------------
@@ -508,7 +570,7 @@ class Discriminator(nn.Module):
                 lower_output = self.from_images[str(resolution // 2)](
                     utils.image.nearest_downsample(input, 2)
                 )
-                output = alpha * output + (1.0 - alpha) * lower_output
+                output = torch.lerp(lower_output, output, alpha)
         output = self.layers["last"](output)
         if label is not None:
             output = (output * label).sum(dim=1, keepdim=True)

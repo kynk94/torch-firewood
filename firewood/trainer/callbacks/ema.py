@@ -34,20 +34,22 @@ class ExponentialMovingAverage(Callback):
         elif isinstance(target_modules, Sequence):
             target_modules = tuple(target_modules)
         self.target_modules = target_modules
-        self.device = torch.device(device) if device is not None else None
+        self.device: Optional[DEVICE] = (
+            torch.device(device) if device is not None else None
+        )
 
         self.original = StateDictManager(device=self.device)
         self.shadow: Dict[str, Tensor] = dict()
 
     @torch.no_grad()
     def _parameter_to_shadow(self, name: str, parameter: Tensor) -> None:
-        if self.device.type == "cpu":
+        if isinstance(self.device, torch.device) and self.device.type == "cpu":
             parameter = parameter.detach().cpu()
         if name not in self.shadow:
             self.shadow[name] = parameter.clone()
             return
-        self.shadow[name] = (
-            self.decay * self.shadow[name] + (1 - self.decay) * parameter
+        self.shadow[name].copy_(
+            torch.lerp(parameter, self.shadow[name], self.decay)
         )
 
     def on_train_start(
@@ -56,7 +58,7 @@ class ExponentialMovingAverage(Callback):
         if trainer.global_rank != 0:
             return
         if self.device is None:
-            self.device = self.original.device = pl_module.device
+            self.device = self.original.device = torch.device(pl_module.device)
         for name, parameter in pl_module.named_parameters():
             self._parameter_to_shadow(name, parameter)
 
