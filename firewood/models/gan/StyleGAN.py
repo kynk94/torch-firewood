@@ -438,13 +438,15 @@ class Generator(nn.Module):
         style = style.unsqueeze(1).expand(-1, self.synthesis.n_layers * 2, -1)
 
         if self.training and self.style_avg_beta is not None:
-            self.style_avg.copy_(
-                torch.lerp(
-                    style[:, 0].mean(0),
-                    self.style_avg,
-                    self.style_avg_beta,
+            with torch.no_grad():
+                self.style_avg.copy_(
+                    torch.lerp(
+                        style[:, 0].mean(0),
+                        self.style_avg,
+                        self.style_avg_beta,
+                    )
                 )
-            )
+
         layer_index = torch.arange(
             self.synthesis.n_layers * 2, device=input.device
         ).view(1, -1, 1)
@@ -649,7 +651,7 @@ def main() -> None:
             self,
             latent_dim: int = 512,
             style_dim: int = 512,
-            label_dim: int = 8,
+            label_dim: int = 0,
             resolution: int = 1024,
         ) -> None:
             super().__init__()
