@@ -74,11 +74,11 @@ class Block(nn.Module):
         self.update_layer_in_order("weighting", weight_layer)
 
         # set FIR filter
-        upsample_layer, down_fir_layer = get_upfirdn_layer(
+        upsample_layer, fir_down_layer = get_upfirdn_layer(
             rank=self.rank, kernel=fir, up=up, down=down, **fir_args or dict()
         )
         self.update_layer_in_order("up", upsample_layer)
-        self.update_layer_in_order("fir_down", down_fir_layer)
+        self.update_layer_in_order("fir_down", fir_down_layer)
 
         # set noise
         self.update_layer_in_order(
