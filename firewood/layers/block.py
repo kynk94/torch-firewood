@@ -8,7 +8,7 @@ from torch import Tensor
 
 from firewood import utils
 from firewood.common import backend
-from firewood.common.types import STR
+from firewood.common.types import INT, STR
 from firewood.hooks import lr_equalizers, weight_normalizations
 from firewood.layers import activations
 from firewood.layers import noise as _noise
@@ -19,7 +19,7 @@ from firewood.layers.upfirdn import get_upfirdn_layer
 
 # If want to use other layers in Block, modify values of SUPPORT_LAYER_NAMES.
 SUPPORT_LAYER_NAMES = {
-    "W": ["up_fir", "weighting", "down_fir", "noise"],
+    "W": ["up", "weighting", "fir_down", "noise"],
     "N": ["normalization"],
     "B": ["add_bias"],
     "A": ["activation", "dropout"],
@@ -46,19 +46,21 @@ class Block(nn.Module):
         weight_layer: nn.Module,
         op_order: str = "WNA",
         normalization: Optional[str] = None,
-        normalization_args: Optional[Dict[str, Any]] = None,
         activation: Optional[str] = None,
-        activation_args: Optional[Dict[str, Any]] = None,
+        up: Optional[INT] = None,
         fir: Optional[List[float]] = None,
-        fir_args: Optional[Dict[str, Any]] = None,
+        down: Optional[INT] = None,
         noise: Optional[str] = None,
-        noise_args: Optional[Dict[str, Any]] = None,
         weight_normalization: Optional[STR] = None,
-        weight_normalization_args: Optional[Dict[str, Any]] = None,
         lr_equalization: Optional[bool] = None,
-        lr_equalization_args: Optional[Dict[str, Any]] = None,
         dropout: Optional[float] = None,
         keep_meaningless_bias: bool = False,
+        normalization_args: Optional[Dict[str, Any]] = None,
+        activation_args: Optional[Dict[str, Any]] = None,
+        fir_args: Optional[Dict[str, Any]] = None,
+        noise_args: Optional[Dict[str, Any]] = None,
+        weight_normalization_args: Optional[Dict[str, Any]] = None,
+        lr_equalization_args: Optional[Dict[str, Any]] = None,
     ) -> None:
         super().__init__()
         self.rank = utils.get_rank(weight_layer)
@@ -72,11 +74,11 @@ class Block(nn.Module):
         self.update_layer_in_order("weighting", weight_layer)
 
         # set FIR filter
-        up_fir_layer, down_fir_layer = get_upfirdn_layer(
-            rank=self.rank, kernel=fir, **fir_args or dict()
+        upsample_layer, down_fir_layer = get_upfirdn_layer(
+            rank=self.rank, kernel=fir, up=up, down=down, **fir_args or dict()
         )
-        self.update_layer_in_order("up_fir", up_fir_layer)
-        self.update_layer_in_order("down_fir", down_fir_layer)
+        self.update_layer_in_order("up", upsample_layer)
+        self.update_layer_in_order("fir_down", down_fir_layer)
 
         # set noise
         self.update_layer_in_order(

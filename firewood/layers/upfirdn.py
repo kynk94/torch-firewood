@@ -21,36 +21,25 @@ from firewood.utils.image import nearest_downsample, upsample
 def get_upfirdn_layer(
     rank: int,
     kernel: Optional[NUMBER] = None,
-    up: INT = 1,
-    down: INT = 1,
+    up: Optional[INT] = 1,
+    down: Optional[INT] = 1,
     padding: INT = 0,
     gain: float = 1.0,
     normalize_kernel: bool = True,
     flip_kernel: bool = False,
     device: Optional[DEVICE] = None,
-) -> Tuple[Optional["_UpFirDnNd"], Optional["_UpFirDnNd"]]:
+) -> Tuple[Optional[nn.Upsample], Optional["_UpFirDnNd"]]:
     if rank == 0:
         return None, None
-    upfir: Optional[_UpFirDnNd] = None
-    firdown: Optional[_UpFirDnNd] = None
-    up = utils.normalize_int_tuple(up, rank)
-    down = utils.normalize_int_tuple(down, rank)
+    upsample_layer: Optional[nn.Upsample] = None
+    fir_downsample_layer: Optional[_UpFirDnNd] = None
+    up = utils.normalize_int_tuple(up or 1, rank)
+    down = utils.normalize_int_tuple(down or 1, rank)
     module: _UpFirDnNd = getattr(sys.modules[__name__], f"UpFirDn{rank}d")
     if any(u > 1 for u in up):
-        upfir = module(
-            kernel=kernel,
-            up=up,
-            down=1,
-            padding=padding,
-            gain=gain,
-            normalize_kernel=normalize_kernel,
-            flip_kernel=flip_kernel,
-            ignore_same_padding=False,
-            device=device,
-        )
-        padding = 0
-    if any(d > 1 for d in down) or (upfir is None and kernel is not None):
-        firdown = module(
+        upsample_layer = nn.Upsample(scale_factor=up, mode="nearest")
+    if any(d > 1 for d in down) or kernel is not None:
+        fir_downsample_layer = module(
             kernel=kernel,
             up=1,
             down=down,
@@ -61,7 +50,7 @@ def get_upfirdn_layer(
             ignore_same_padding=False,
             device=device,
         )
-    return upfir, firdown
+    return upsample_layer, fir_downsample_layer
 
 
 class _UpFirDnNd(nn.Module):
