@@ -1,9 +1,10 @@
 import os
-from typing import Any, Optional, Tuple, Union, cast, overload
+from typing import Any, Optional, Sequence, Tuple, Union, cast, overload
 
 import imageio
 import numpy as np
 import torch
+import torch.nn.functional as F
 import torchvision.transforms.functional_tensor as TFT
 import torchvision.utils as TU
 from numpy import ndarray
@@ -11,7 +12,11 @@ from PIL import Image
 from torch import Tensor
 
 from firewood.common.types import INT
-from firewood.utils.common import normalize_int_tuple, squared_number
+from firewood.utils.common import (
+    normalize_float_tuple,
+    normalize_int_tuple,
+    squared_number,
+)
 
 
 def alpha_smoothing(
@@ -36,6 +41,7 @@ def alpha_smoothing(
             )
         alpha = image[..., -1]
         image = image[..., :-1]
+        C -= 1
     elif isinstance(alpha, Image.Image):
         if C not in {1, 3}:
             raise ValueError(
@@ -44,22 +50,24 @@ def alpha_smoothing(
         if alpha.size != (W, H):
             alpha = alpha.resize((W, H))
         alpha = np.array(alpha, dtype=np.float32)
-    alpha = cast(ndarray, alpha)
-    alpha = normalize_image_array(alpha, 0, 1)
+    elif alpha.shape[:2] != (H, W):
+        raise ValueError(
+            "If alpha exists, it should have the same shape as image."
+        )
+    alpha = normalize_image_array(cast(ndarray, alpha), 0, 1)
     if alpha.ndim == 2:
         alpha = np.expand_dims(alpha, -1)
 
-    if isinstance(background_color, ndarray):
-        background_color = background_color.reshape(-1).astype(np.float32)
-    elif isinstance(background_color, int):
-        background_color = np.array((background_color,), dtype=np.float32)
-    else:
-        background_color = np.array(background_color, dtype=np.float32)
-    if background_color.shape[0] not in {1, 3}:
+    if not isinstance(background_color, ndarray):
+        background_color = np.array(
+            normalize_float_tuple(background_color, 3), dtype=np.float32
+        )
+    background_color = background_color.reshape(-1).astype(np.float32)
+    if background_color.shape[-1] not in {1, 3}:
         raise ValueError(
             "background_color should be an iterable of length 1 or 3."
         )
-    if image.shape[-1] == 1 and background_color.shape[0] == 3:
+    if C == 1 and background_color.shape[-1] == 3:
         background_color = np.matmul(
             background_color,
             np.array([0.299, 0.587, 0.114], dtype=np.float32),
@@ -89,6 +97,7 @@ def alpha_smoothing_NCHW_tensor(
             )
         alpha = image[:, -1]
         image = image[:, :-1]
+        C -= 1
     elif C not in {1, 3}:
         raise ValueError("If alpha exists, image should have 1 or 3 channels.")
     elif alpha.shape[2:] != (H, W):
@@ -98,25 +107,28 @@ def alpha_smoothing_NCHW_tensor(
             interpolation="bilinear",
             antialias=antialias,  # antialias does not keep gradient
         )
-    alpha = normalize_image_array(cast(Tensor, alpha), 0, 1)
+    alpha = normalize_image_array(
+        cast(Tensor, alpha).to(device=device, non_blocking=True), 0, 1
+    )
 
-    if isinstance(background_color, Tensor):
-        background_color = background_color.float().view(-1)
-    else:
-        if isinstance(background_color, int):
-            background_color = (background_color,)
-        background_color = torch.tensor(background_color, dtype=torch.float32)
-    if background_color.shape[0] not in {1, 3}:
+    if not isinstance(background_color, Tensor):
+        background_color = torch.tensor(
+            normalize_float_tuple(background_color, 3), dtype=torch.float32
+        )
+    background_color = background_color.float().squeeze().flatten(-1)
+    if background_color.ndim > 2:
+        raise ValueError("background_color should be a 1D or 2D tensor.")
+    if background_color.size(-1) not in {1, 3}:
         raise ValueError(
             "background_color should be an iterable of length 1 or 3."
         )
-    if image.size(1) == 1 and background_color.size(0) == 3:
+    if C == 1 and background_color.size(-1) == 3:
         background_color = torch.matmul(
             background_color,
             torch.tensor([0.299, 0.587, 0.114], dtype=torch.float32),
         )
-    background = background_color.view(1, -1, 1, 1).to(device=device)
-    return alpha * image + (1 - alpha) * background
+    background = background_color.view(-1, C, 1, 1).to(device=device)
+    return torch.lerp(background, image, alpha)
 
 
 def make_grid(
@@ -221,9 +233,7 @@ def tensor_to_image(tensor: Tensor, auto_permute: bool = False) -> ndarray:
             tensor, target_format="NHWC", ignore_error=True
         )
     tensor = normalize_image_array(tensor.detach().cpu(), 0, 255)
-    array: ndarray = tensor.add_(0.5).clamp_(0, 255).numpy()
-    images = array.astype(np.uint8)
-    return images
+    return tensor.add_(0.5).clamp_(0, 255).byte().numpy()
 
 
 def save_tensor_to_image(tensor: Tensor, uri: Any) -> Optional[bytes]:
@@ -463,6 +473,7 @@ def zero_insertion_upsample(input: Tensor, factor: INT) -> Tensor:
 def nearest_upsample(input: Tensor, factor: INT) -> Tensor:
     """
     Upsampling by nearest neighbor.
+    This implementation is slower than `F.interpolate`.
     """
     factor = normalize_int_tuple(factor, input.ndim - 2)
     if set(factor) == {1}:
@@ -491,7 +502,7 @@ def upsample(input: Tensor, factor: INT, mode: str = "zeros") -> Tensor:
     """
     lower_mode = mode.lower()
     if lower_mode.startswith("near"):
-        return nearest_upsample(input, factor)
+        return F.interpolate(input, scale_factor=factor, mode="nearest")
     if lower_mode.startswith("zero"):
         return zero_insertion_upsample(input, factor)
     raise ValueError(f"Unknown upsampling mode: {mode}")
@@ -518,29 +529,50 @@ def tensor_resize(
     image: Tensor,
     size: INT,
     interpolation: str = "bilinear",
-    max_size: Optional[int] = None,
     antialias: Optional[bool] = None,
 ) -> Tensor:
-    size = normalize_int_tuple(size, 2)
+    """
+    Resize a tensor of images to given `size`.
+
+    Args:
+        image: Tensor of shape (C, H, W) or (N, C, H, W).
+        size: Desired output size.
+            If `size` is an integer, larger edge of the image will be matched to
+            this number preserving the aspect ratio.
+            If `size` is a sequence of two integers like (h, w), output size
+            will be matched to this sequence.
+        interpolation: Interpolation mode to calculate output values.
+            Only {"nearest", "bilinear", "bicubic"} are supported.
+        antialias: Whether to apply anti-aliasing filter.
+    """
+    interpolation = interpolation.lower()
+    if isinstance(size, int):
+        short, long = sorted(image.shape[-2:])
+        if short == long:
+            return tensor_resize(image, (size, size), interpolation, antialias)
+        if long == size:
+            return image
+        size = (round(short * size / long), size)
+    elif isinstance(size, Sequence):
+        size = normalize_int_tuple(size, 2)
+    else:
+        raise TypeError(f"Unexpected size type: {type(size)}")
     if image.size(-1) == size[-1] and image.size(-2) == size[-2]:
         return image
-    if antialias != True:
-        return TFT.resize(image, size, interpolation, max_size, antialias)
+    if image.device.type == "cpu" or antialias != True:
+        return TFT.resize(image, size, interpolation, antialias=antialias)
 
     need_twice = False
-
     temp_size = []
     for target, original in zip(size, image.shape[2:]):
         ratio = float(target) / float(original)
+        # If antialias is True and ratio is less than 0.01, need to resize twice
+        # to avoid `RuntimeError: Too much shared memory required`
         if ratio < 0.01:
             need_twice = True
             temp_size.append(target * 10)
         else:
             temp_size.append(target)
-    if not need_twice:
-        return TFT.resize(image, size, interpolation, max_size, antialias)
-
-    temp_image = TFT.resize(
-        image, temp_size, interpolation, max_size, antialias
-    )
-    return TFT.resize(temp_image, size, interpolation, max_size, antialias)
+    if need_twice:
+        image = TFT.resize(image, temp_size, interpolation, antialias=antialias)
+    return TFT.resize(image, size, interpolation, antialias=antialias)
