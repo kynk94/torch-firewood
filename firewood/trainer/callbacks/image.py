@@ -106,6 +106,7 @@ class _ImageCallback(Callback):
                 )
         return generated_images
 
+    @torch.no_grad()
     def _make_grid(self, input: Tensor) -> Tensor:
         grid = TU.make_grid(
             tensor=input,
@@ -116,17 +117,14 @@ class _ImageCallback(Callback):
             scale_each=self.scale_each,
             pad_value=self.pad_value,
         )
-        if self.grid_max_resolution is None:
+        if (
+            self.grid_max_resolution is None
+            or max(grid.shape[-2:]) < self.grid_max_resolution
+        ):
             return grid
-
-        height, width = grid.shape[-2:]
-        larger = max(height, width)
-        if larger < self.grid_max_resolution:
-            return grid
-
-        ratio = self.grid_max_resolution / larger
-        new_resolution = (int(height * ratio), int(width * ratio))
-        return TFT.resize(grid, new_resolution, antialias=True)
+        return utils.image.tensor_resize(
+            grid, self.grid_max_resolution, antialias=True
+        )
 
     def log_image(
         self,

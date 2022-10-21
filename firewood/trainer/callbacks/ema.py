@@ -14,8 +14,8 @@ class ExponentialMovingAverage(Callback):
     """
     Maintains Exponential Moving Average of weights by decay factor.
     The EMA weights are updated after each batch and are used for validation.
-    If gpu memory is not enough, set `device` as "cpu". Then, the EMA weights
-    stored in CPU memory.
+    If gpu memory is not enough, set `store_on_cpu` as True. Then, the EMA
+    weights stored in CPU memory.
 
     The shadow parameter is updated as:
         shadow_parameter = decay * shadow_parameter + (1 - decay) * parameter
@@ -25,7 +25,8 @@ class ExponentialMovingAverage(Callback):
         self,
         decay: float = 0.999,
         target_modules: Optional[STR] = None,
-        device: Optional[DEVICE] = None,
+        exclude_modules: Optional[STR] = None,
+        store_on_cpu: bool = False,
     ):
         super().__init__()
         self.decay = decay
@@ -34,23 +35,29 @@ class ExponentialMovingAverage(Callback):
         elif isinstance(target_modules, Sequence):
             target_modules = tuple(target_modules)
         self.target_modules = target_modules
-        self.device: Optional[DEVICE] = (
-            torch.device(device) if device is not None else None
-        )
+        if isinstance(exclude_modules, str):
+            exclude_modules = (exclude_modules,)
+        elif isinstance(exclude_modules, Sequence):
+            exclude_modules = tuple(exclude_modules)
+        self.exclude_modules = exclude_modules
+        self.store_on_cpu = store_on_cpu
 
-        self.original = StateDictManager(device=self.device)
-        self.shadow: Dict[str, Tensor] = dict()
+        self.shadow = StateDictManager(store_on_cpu=store_on_cpu)
+        self.original = StateDictManager(store_on_cpu=True)
+        self.device: Optional[DEVICE] = None
 
     @torch.no_grad()
     def _parameter_to_shadow(self, name: str, parameter: Tensor) -> None:
-        if isinstance(self.device, torch.device) and self.device.type == "cpu":
-            parameter = parameter.detach().cpu()
-        if name not in self.shadow:
-            self.shadow[name] = parameter.clone()
+        if "inception" in name or "fid" in name or "lpips" in name:
             return
-        self.shadow[name].copy_(
-            torch.lerp(parameter, self.shadow[name], self.decay)
-        )
+        if self.target_modules and not name.startswith(self.target_modules):
+            return
+        if self.exclude_modules and name.startswith(self.exclude_modules):
+            return
+        if name not in self.shadow:
+            self.shadow[name] = parameter
+            return
+        self.shadow[name] = torch.lerp(parameter, self.shadow[name], self.decay)
 
     def on_train_start(
         self, trainer: Trainer, pl_module: LightningModule
@@ -58,7 +65,7 @@ class ExponentialMovingAverage(Callback):
         if trainer.global_rank != 0:
             return
         if self.device is None:
-            self.device = self.original.device = torch.device(pl_module.device)
+            self.device = pl_module.device
         for name, parameter in pl_module.named_parameters():
             self._parameter_to_shadow(name, parameter)
 
@@ -72,13 +79,8 @@ class ExponentialMovingAverage(Callback):
     ) -> None:
         if trainer.global_rank != 0:
             return
-        if self.target_modules is None:
-            for name, parameter in pl_module.named_parameters():
-                self._parameter_to_shadow(name, parameter)
-        else:
-            for name, parameter in pl_module.named_parameters():
-                if name.startswith(self.target_modules):
-                    self._parameter_to_shadow(name, parameter)
+        for name, parameter in pl_module.named_parameters():
+            self._parameter_to_shadow(name, parameter)
 
     def on_validation_start(
         self, trainer: Trainer, pl_module: LightningModule
@@ -87,7 +89,9 @@ class ExponentialMovingAverage(Callback):
             return
 
         self.original.update(pl_module.state_dict())
-        self.shadow = trainer.strategy.broadcast(self.shadow, src=0)
+        self.shadow = trainer.strategy.broadcast(
+            self.shadow.to("cpu"), src=0
+        ).to(pl_module.device)
         pl_module.load_state_dict(self.shadow, strict=False)
         if trainer.global_rank > 0:
             self.shadow.clear()
@@ -105,6 +109,6 @@ class ExponentialMovingAverage(Callback):
         return {k: args_to(v, device="cpu") for k, v in self.shadow.items()}
 
     def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
-        self.shadow = {
-            k: args_to(v, device=self.device) for k, v in state_dict.items()
-        }
+        self.shadow.update(
+            {k: args_to(v, device=self.device) for k, v in state_dict.items()}
+        )

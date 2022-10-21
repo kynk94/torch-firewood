@@ -309,10 +309,10 @@ class StyleGAN(pl.LightningModule):
         return max(2, int(self.hparams.initial_batch_size / scale))
 
     def update_scheduler(self, batch_size: int) -> None:
-        total_minibatch_size = self.trainer.num_devices * batch_size
+        total_batch_size = self.trainer.num_devices * batch_size
         g_scheduler, d_scheduler = self.lr_schedulers()
-        g_scheduler.update(total_minibatch_size)
-        d_scheduler.update(total_minibatch_size)
+        g_scheduler.update(total_batch_size)
+        d_scheduler.update(total_batch_size)
         if g_scheduler.resolution != self.current_resolution:
             next_batch_size = self.calculate_batch_size(g_scheduler.resolution)
             update_dataloader_of_trainer(
@@ -438,7 +438,7 @@ def main():
 
     gpus = torch.cuda.device_count()
     callbacks = [
-        ExponentialMovingAverage(),
+        ExponentialMovingAverage(target_modules=("generator", "discriminator")),
         ModelCheckpoint(save_last_k=3),
         LatentImageSampler(step=500, add_fixed_samples=True, save_image=True),
         LatentDimInterpolator(
@@ -454,7 +454,7 @@ def main():
         precision=32,
         check_val_every_n_epoch=5,
         callbacks=callbacks,
-        strategy="ddp" if gpus > 0 else None,
+        strategy="ddp" if gpus > 1 else None,
     )
     trainer.logger._default_hp_metric = False
     trainer.fit(model, datamodule=datamodule)
