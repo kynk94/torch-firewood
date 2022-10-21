@@ -6,11 +6,17 @@ https://arxiv.org/abs/1812.04948
 
 Differences from the official implementation:
     official:
-        Uses weight size of noise as 'inputs channels'.
+      * Uses weight size of noise as 'inputs channels'.
         By the way, official StyleGAN2 uses weight size of noise as '1'.
+      * Uses gain as 'sqrt(2)' for all layers except first and last layers.
+      * Uses instance normalization without bessel's correction.
     this:
-        Uses weight size of noise as '1' for convenience, following to the
+      * Uses weight size of noise as '1' for convenience, following to the
         implementation of official StyleGAN2.
+      * Uses gain as '1' for all layers, following to the implementation of
+        official StyleGAN2.
+      * Uses instance normalization with bessel's correction, following to the
+        implementation of official AdaIN.
 
 Therefore, the difference in the total number of parameters come from
 the noise layers.
@@ -200,7 +206,7 @@ class UpConvConvBlock(nn.Module):
             op_order="WAN",
         )
         self.conv_adain_1 = layers.Conv2dBlock(
-            in_channels, out_channels, fir=fir, fir_args=dict(up=up), **kwargs
+            in_channels, out_channels, fir=fir, up=up, **kwargs
         )
         self.conv_adain_1.update_layer_in_order(
             "normalization",
@@ -291,7 +297,7 @@ class SynthesisNetwork(nn.Module):
                 )
 
             self.to_images[str(resolution)] = layers.GFixConv2d(
-                out_channels, self.image_channels, 3, 1, "same", bias=True
+                out_channels, self.image_channels, 1, 1, "same", bias=True
             )
 
         if lr_equalization:
@@ -363,7 +369,7 @@ class SynthesisNetwork(nn.Module):
             )
         return resolution
 
-    def reduce_model_for_inference(self) -> None:
+    def reduce_for_inference(self) -> None:
         """
         Remove all `to_images` except the last one.
         If only using model for inference, such as ONNX, this method is useful
@@ -477,6 +483,30 @@ class Generator(nn.Module):
         image = self.synthesis(style, alpha, resolution)
         return image
 
+    @torch.no_grad()
+    def inference_all(
+        self,
+        input: Tensor,
+        label: Optional[Tensor] = None,
+        truncation: float = 0.7,
+    ) -> Tuple[Tensor, ...]:
+        self.eval()
+        style: Tensor = self.mapping(input)
+        style = style.unsqueeze(1).expand(-1, self.synthesis.n_layers * 2, -1)
+        if truncation is not None and self.truncation_cutoff is not None:
+            truncation = utils.clamp(truncation, 0.0, 1.0)
+            layer_index = torch.arange(
+                self.synthesis.n_layers * 2, device=input.device
+            ).view(1, -1, 1)
+            style = torch.where(
+                layer_index < self.truncation_cutoff,
+                torch.lerp(self.style_avg, style, truncation),
+                style,
+            )
+        images = self.synthesis.inference_all(style)
+        self.train()
+        return images
+
 
 # ------------------------------------------------------------------------------
 
@@ -507,7 +537,7 @@ class ConvConvDownBlock(nn.Module):
             in_channels,
             out_channels,
             fir=fir,
-            fir_args=dict(down=down),
+            down=down,
             **kwargs,
         )
 
@@ -612,7 +642,7 @@ class Discriminator(nn.Module):
 
         output: Tensor = self.from_images[str(resolution)](input)
         for i in range(int(math.log2(resolution)) - 2, -1, -1):
-            current_resolution = 2 ** (i + 2)
+            current_resolution = self.initial_resolution * 2**i
             output = self.layers[str(current_resolution)](output)
             if (
                 current_resolution == resolution > self.initial_resolution
