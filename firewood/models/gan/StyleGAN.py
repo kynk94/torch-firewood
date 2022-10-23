@@ -383,6 +383,8 @@ class SynthesisNetwork(nn.Module):
 
 # ------------------------------------------------------------------------------
 class Generator(nn.Module):
+    style_avg: Tensor
+
     def __init__(
         self,
         latent_dim: int = 512,
@@ -462,7 +464,7 @@ class Generator(nn.Module):
             and random.random() < self.style_mixing_probability
         ):
             mixing_input = torch.randn_like(input)
-            mixing_style = self.mapping(mixing_input, label)
+            mixing_style: Tensor = self.mapping(mixing_input, label)
             mixing_style = mixing_style.unsqueeze(1).expand(
                 -1, self.synthesis.n_layers * 2, -1
             )
@@ -491,7 +493,7 @@ class Generator(nn.Module):
         truncation: float = 0.7,
     ) -> Tuple[Tensor, ...]:
         self.eval()
-        style: Tensor = self.mapping(input)
+        style: Tensor = self.mapping(input, label)
         style = style.unsqueeze(1).expand(-1, self.synthesis.n_layers * 2, -1)
         if truncation is not None and self.truncation_cutoff is not None:
             truncation = utils.clamp(truncation, 0.0, 1.0)
