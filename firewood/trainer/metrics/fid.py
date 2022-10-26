@@ -28,7 +28,7 @@ def _to_resize_lib(resize_lib: Union[str, RESIZE_LIB]) -> RESIZE_LIB:
         return RESIZE_LIB.TORCH
     if resize_lib.startswith("pil"):
         return RESIZE_LIB.PIL
-    if resize_lib.startswith("tf"):
+    if resize_lib.startswith(("tf", "tensor")):
         return RESIZE_LIB.TF
     raise ValueError(f"Unknown resize library: {resize_lib}")
 
