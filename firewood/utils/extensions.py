@@ -21,7 +21,7 @@ _CUDA_SOURCES = sorted(
 _CACHED_EXTENSIONS: Dict[str, ModuleType] = dict()
 
 
-def user_cache_dir(appname: str = "torch_extensions"):
+def user_cache_dir(appname: str = "torch_extensions") -> str:
     system = platform.system().lower()
     if system == "windows":
         raise ImportError(f"Please manually clear {appname} cache.")

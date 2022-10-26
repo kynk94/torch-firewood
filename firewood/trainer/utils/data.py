@@ -19,6 +19,7 @@ from typing import (
 )
 
 import numpy as np
+import torch
 import torchvision.datasets as TD
 from natsort import natsort_keygen
 from numpy import ndarray
@@ -1041,6 +1042,8 @@ def update_dataloader_of_trainer(
         targets.append("test")
     if "predict" in target or not targets:
         raise ValueError(f"Invalid target: {target}")
+
+    torch.cuda.empty_cache()
 
     for target in targets:
         source: _DataLoaderSource = getattr(

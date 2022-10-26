@@ -24,8 +24,9 @@ def _arg_to(
             **arg, dtype=dtype, device=device, non_blocking=non_blocking
         )
     if isinstance(arg, Sequence):
-        return args_to(
-            *arg, dtype=dtype, device=device, non_blocking=non_blocking
+        return tuple(
+            _arg_to(_arg, dtype=dtype, device=device, non_blocking=non_blocking)
+            for _arg in arg
         )
     return arg
 
@@ -36,6 +37,8 @@ def args_to(
     device: Optional[DEVICE] = None,
     non_blocking: bool = True,
 ) -> Any:
+    if isinstance(args, tuple) and len(args) == 1:
+        return _arg_to(args[0], dtype, device, non_blocking)
     outputs = []
     for arg in args:
         outputs.append(_arg_to(arg, dtype, device, non_blocking))

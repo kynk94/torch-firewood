@@ -5,6 +5,7 @@ from torch import Tensor
 
 
 def print_cuda_memory(input: Optional[Tensor] = None) -> None:
+    # `torch.cuda.mem_get_info` use some memory.
     vram_free, vram_total = cast(
         Tuple[float, float],
         torch.cuda.mem_get_info(torch.cuda.current_device()),

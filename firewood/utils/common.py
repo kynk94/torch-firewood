@@ -327,6 +327,14 @@ def highest_power_of_2(n: int) -> int:
     return 2 ** (n.bit_length() - 1)
 
 
+def maximum_multiple_of_divisor(n: int, divisor: int) -> int:
+    """
+    Return the maximum multiple of `divisor` that is less than or equal to `n`.
+    If `divisor` is larger than `n`, return 0.
+    """
+    return n - (n % divisor)
+
+
 def squared_number(n: Union[int, float]) -> int:
     """
     Return square root of `n` if `n` is a perfect square using Babylonian
