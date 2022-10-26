@@ -8,7 +8,7 @@ Differences from the official implementation:
     official:
       * Uses weight size of noise as 'inputs channels'.
         By the way, official StyleGAN2 uses weight size of noise as '1'.
-      * Uses gain as 'sqrt(2)' for all layers except first and last layers.
+      * Uses gain as 'sqrt(2)' for all layers except ToRGB and last layers.
       * Uses instance normalization without bessel's correction.
     this:
       * Uses weight size of noise as '1' for convenience, following to the
@@ -29,6 +29,7 @@ from typing import Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch import Tensor
 
 from firewood import hooks, layers, utils
@@ -252,7 +253,9 @@ class SynthesisNetwork(nn.Module):
         self.initial_input_type = initial_input_type
         self.resolution = self._check_resolution(resolution)
         self.image_channels = image_channels
-        self.n_layers = int(math.log2(self.resolution)) - 1
+        self.n_layers = (
+            int(math.log2(self.resolution / self.initial_resolution)) + 1
+        )
 
         self.layers = nn.ModuleDict()
         self.to_images = nn.ModuleDict()
@@ -297,7 +300,7 @@ class SynthesisNetwork(nn.Module):
                 )
 
             self.to_images[str(resolution)] = layers.GFixConv2d(
-                out_channels, self.image_channels, 1, 1, "same", bias=True
+                out_channels, self.image_channels, 1, 1, 0, bias=True
             )
 
         if lr_equalization:
@@ -334,8 +337,8 @@ class SynthesisNetwork(nn.Module):
             image = self.to_images[str(resolution)](output)
             if resolution > self.initial_resolution and 0.0 <= alpha < 1.0:
                 lower_image = self.to_images[str(resolution // 2)](prev_output)
-                upsampled_lower_image = utils.image.upsample(
-                    lower_image, factor=2, mode="nearest"
+                upsampled_lower_image = F.interpolate(
+                    lower_image, scale_factor=2, mode="nearest"
                 )
                 image = torch.lerp(upsampled_lower_image, image, alpha)
             output = image
@@ -572,7 +575,9 @@ class Discriminator(nn.Module):
         self.mbstd_group = mbstd_group
         self.resolution = resolution
         self.image_channels = image_channels
-        self.n_layers = int(math.log2(self.resolution)) - 1
+        self.n_layers = (
+            int(math.log2(self.resolution / self.initial_resolution)) + 1
+        )
 
         self.layers = nn.ModuleDict()
         self.from_images = nn.ModuleDict()

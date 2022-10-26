@@ -4,11 +4,9 @@ from typing import Any, Dict, List, Tuple
 
 import pytorch_lightning as pl
 import torch
-from pytorch_lightning.loggers import TensorBoardLogger
 from torch import Tensor
 from torchvision import transforms
 
-from firewood.common.backend import set_seed
 from firewood.common.types import INT
 from firewood.models.gan.GAN import Discriminator, Generator
 from firewood.trainer.callbacks import (
@@ -161,7 +159,7 @@ def main():
     args = vars(parser.parse_args())
     # fmt: on
 
-    set_seed(0)
+    pl.seed_everything(0)
 
     transform = transforms.Compose(
         [transforms.ToTensor(), transforms.Normalize(0.5, 0.5)]
@@ -197,9 +195,7 @@ def main():
     )
     callbacks = [
         ModelCheckpoint(save_last_k=3),
-        LatentImageSampler(
-            step=100, on_epoch_end=False, add_fixed_samples=True
-        ),
+        LatentImageSampler(step=100, on_epoch_end=False, log_fixed_batch=True),
         LatentDimInterpolator(),
     ]
     gpus = torch.cuda.device_count()

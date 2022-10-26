@@ -4,11 +4,10 @@ from typing import Any, Dict, List, Tuple
 
 import pytorch_lightning as pl
 import torch
-from pytorch_lightning.loggers import TensorBoardLogger
 from torch import Tensor
 from torchvision import transforms
 
-from firewood.common.backend import set_runtime_build, set_seed
+from firewood.common.backend import set_runtime_build
 from firewood.common.types import INT
 from firewood.models.gan.LSGAN import Discriminator, Generator
 from firewood.trainer.callbacks import (
@@ -177,7 +176,7 @@ def main():
     args = vars(parser.parse_args())
     # fmt: on
 
-    set_seed(0)
+    pl.seed_everything(0)
 
     if args["runtime_build"]:
         set_runtime_build(True)
@@ -211,25 +210,22 @@ def main():
     sample_image: Tensor = next(iter(train_dataloader))[0]  # (N, C, H, W)
     channels, resolution = sample_image.shape[1:3]
 
-    if args["checkpoint"] is not None:
-        lsgan = LSGAN.load_from_checkpoint(find_checkpoint(args["checkpoint"]))
-    else:
-        lsgan = LSGAN(
-            latent_dim=args["latent_dim"],
-            gen_n_layers=7,
-            gen_n_filters=256,
-            gen_activation="lrelu",
-            dis_n_layers=4,
-            dis_n_filters=64,
-            dis_activation="lrelu",
-            resolution=resolution,
-            channels=channels,
-            learning_rate=args["learning_rate"],
-        )
+    lsgan = LSGAN(
+        latent_dim=args["latent_dim"],
+        gen_n_layers=7,
+        gen_n_filters=256,
+        gen_activation="lrelu",
+        dis_n_layers=4,
+        dis_n_filters=64,
+        dis_activation="lrelu",
+        resolution=resolution,
+        channels=channels,
+        learning_rate=args["learning_rate"],
+    )
 
     callbacks = [
         ModelCheckpoint(save_last_k=3),
-        LatentImageSampler(step=500, add_fixed_samples=True, save_image=True),
+        LatentImageSampler(step=500, log_fixed_batch=True, save_image=True),
         LatentDimInterpolator(
             ndim_to_interpolate=args["latent_dim"] // 10, save_image=True
         ),
@@ -246,10 +242,15 @@ def main():
         strategy="ddp" if gpus > 1 else None,
     )
     trainer.logger._default_hp_metric = False
+
+    ckpt_path = (
+        find_checkpoint(args["checkpoint"]) if args["checkpoint"] else None
+    )
     trainer.fit(
         lsgan,
         train_dataloaders=train_dataloader,
         val_dataloaders=val_dataloader or test_dataloader,
+        ckpt_path=ckpt_path,
     )
 
 

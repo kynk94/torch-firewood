@@ -1,10 +1,8 @@
 import math
-from typing import Dict, Tuple
+from typing import Dict, Optional, Tuple
 
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import _LRScheduler
-
-DEFAULT_LR = {128: 0.0015, 256: 0.002, 512: 0.003, 1024: 0.003}
 
 
 class ProgressiveScheduler(_LRScheduler):
@@ -20,19 +18,19 @@ class ProgressiveScheduler(_LRScheduler):
         dataset_size: int = 60000,  # 60k train images in FFHQ, total 70k
         initial_resolution: int = 4,
         max_resolution: int = 1024,
-        level_epoch: float = 10.0,
         fade_epoch: float = 10.0,
+        level_epoch: float = 10.0,
         ramp_up_epoch: float = 0.0,
-        lr_dict: Dict[int, float] = DEFAULT_LR,
+        lr_dict: Optional[Dict[int, float]] = None,
         last_epoch: int = -1,
     ) -> None:
         self.dataset_size = dataset_size
         self.initial_resolution = initial_resolution
         self.max_resolution = max_resolution
-        self.level_epoch = level_epoch
         self.fade_epoch = fade_epoch
+        self.level_epoch = level_epoch
         self.ramp_up_epoch = ramp_up_epoch
-        self.lr_dict = lr_dict
+        self.lr_dict = lr_dict or dict()
 
         self.max_phase = int(
             math.log2(self.max_resolution / self.initial_resolution)
