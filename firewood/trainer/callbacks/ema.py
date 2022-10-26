@@ -62,7 +62,7 @@ class ExponentialMovingAverage(Callback):
     def on_train_start(
         self, trainer: Trainer, pl_module: LightningModule
     ) -> None:
-        if trainer.global_rank != 0:
+        if not trainer.is_global_zero:
             return
         if self.device is None:
             self.device = pl_module.device
@@ -77,7 +77,7 @@ class ExponentialMovingAverage(Callback):
         batch: Any,
         batch_idx: int,
     ) -> None:
-        if trainer.global_rank != 0:
+        if not trainer.is_global_zero:
             return
         for name, parameter in pl_module.named_parameters():
             self._parameter_to_shadow(name, parameter)
@@ -93,8 +93,7 @@ class ExponentialMovingAverage(Callback):
             self.shadow.to("cpu"), src=0
         ).to(pl_module.device)
         pl_module.load_state_dict(self.shadow, strict=False)
-        if trainer.global_rank > 0:
-            self.shadow.clear()
+        self.shadow.clear()
 
     def on_validation_end(
         self, trainer: Trainer, pl_module: LightningModule
@@ -102,6 +101,8 @@ class ExponentialMovingAverage(Callback):
         if trainer.sanity_checking:
             return
 
+        if trainer.is_global_zero:
+            self.shadow.update(pl_module.state_dict())
         pl_module.load_state_dict(self.original, strict=False)
         self.original.clear()
 
@@ -109,6 +110,5 @@ class ExponentialMovingAverage(Callback):
         return {k: args_to(v, device="cpu") for k, v in self.shadow.items()}
 
     def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
-        self.shadow.update(
-            {k: args_to(v, device=self.device) for k, v in state_dict.items()}
-        )
+        for k, v in state_dict.items():
+            self.shadow.update(k=args_to(v, device=self.device))

@@ -44,7 +44,7 @@ class LatentDimInterpolator(_ImageCallback):
             normalize=normalize,
             norm_range=norm_range,
             on_epoch_end=on_epoch_end,
-            add_fixed_samples=False,
+            log_fixed_batch=False,
             scale_each=scale_each,
             pad_value=pad_value,
             save_image=save_image,
@@ -108,7 +108,7 @@ class LatentDimInterpolator(_ImageCallback):
         pl_module: LightningModule,
         title: Optional[str] = None,
     ) -> None:
-        if trainer.global_rank != 0:
+        if not trainer.is_global_zero:
             return
         title = title or "interpolation"
         latent_dim = getattr(pl_module.hparams, "latent_dim", None)
@@ -169,7 +169,7 @@ class ConditionInterpolator(_ImageCallback):
             normalize=normalize,
             norm_range=norm_range,
             on_epoch_end=on_epoch_end,
-            add_fixed_samples=False,
+            log_fixed_batch=False,
             scale_each=scale_each,
             pad_value=pad_value,
             save_image=save_image,
@@ -252,7 +252,7 @@ class ConditionInterpolator(_ImageCallback):
         pl_module: LightningModule,
         title: Optional[str] = None,
     ) -> None:
-        if trainer.global_rank != 0:
+        if not trainer.is_global_zero:
             return
         title = title or "interpolation"
         if self.conditions_base is None:

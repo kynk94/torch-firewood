@@ -1,11 +1,13 @@
 import math
 import os
-from typing import Any, Iterator, Optional, Tuple, cast
+from typing import Any, Iterator, Mapping, Optional, Sequence, Tuple, cast
 
 import torch
-import torchvision.transforms.functional_tensor as TFT
 import torchvision.utils as TU
 from pytorch_lightning import Callback, LightningModule, Trainer
+from pytorch_lightning.trainer.connectors.data_connector import (
+    _DataLoaderSource,
+)
 from torch import Tensor
 from torch.utils.data import DataLoader
 
@@ -30,12 +32,13 @@ class _ImageCallback(Callback):
         normalize: bool = False,
         norm_range: Optional[Tuple[int, int]] = None,
         on_epoch_end: bool = True,
-        add_fixed_samples: bool = False,
+        log_fixed_batch: bool = False,
+        sample_fixed_batch: bool = False,
         scale_each: bool = False,
         pad_value: int = 0,
         save_image: bool = False,
         grid_max_resolution: Optional[int] = None,
-        **kwargs: Any,
+        sample_args: Optional[dict] = None,
     ) -> None:
         self.step = step
         self.epoch = epoch
@@ -44,12 +47,13 @@ class _ImageCallback(Callback):
         self.padding = padding
         self.normalize = normalize
         self.norm_range = norm_range
-        self.add_fixed_samples = add_fixed_samples
+        self.log_fixed_batch = log_fixed_batch
+        self.sample_fixed_batch = sample_fixed_batch
         self.scale_each = scale_each
         self.pad_value = pad_value
         self.save_image = save_image
         self.grid_max_resolution = grid_max_resolution
-        self.kwargs = kwargs
+        self.sample_args = sample_args or dict()
         self.device: Optional[DEVICE] = None
 
         if self.step is None:
@@ -67,12 +71,13 @@ class _ImageCallback(Callback):
             setattr(self, "on_validation_epoch_end", _pass_through)
             setattr(self, "on_predict_epoch_end", _pass_through)
 
-        self._train_data_iter: Optional[Iterator] = None
-        self._test_data_iter: Optional[Iterator] = None
-        self._val_data_iter: Optional[Iterator] = None
-        self._fixed_train_batch: Optional[Tuple[Any, ...]] = None
-        self._fixed_test_batch: Optional[Tuple[Any, ...]] = None
-        self._fixed_val_batch: Optional[Tuple[Any, ...]] = None
+        # test is not supported
+        self._train_dataloader: Optional[DataLoader] = None
+        self._val_dataloader: Optional[DataLoader] = None
+        self._train_dataloader_iter: Optional[Iterator] = None
+        self._val_dataloader_iter: Optional[Iterator] = None
+        self._fixed_train_batch: Optional[Any] = None
+        self._fixed_val_batch: Optional[Any] = None
 
     @torch.no_grad()
     def _sample(
@@ -84,15 +89,12 @@ class _ImageCallback(Callback):
     ) -> Tensor:
         if self.device is None:
             self.device = pl_module.device
-        args = args_to(*args, dtype=input.dtype, device=self.device)
-        kwargs.update(self.kwargs)
-        kwargs = kwargs_to(**kwargs, dtype=input.dtype, device=self.device)
-
+        kwargs.update(self.sample_args)
         pl_module.eval()
         generated_images: Tensor = pl_module(
             input.to(device=pl_module.device, non_blocking=True),
-            *args,
-            **kwargs,
+            *args_to(*args, dtype=input.dtype, device=self.device),
+            **kwargs_to(**kwargs, dtype=input.dtype, device=self.device),
         )
         pl_module.train()
 
@@ -134,7 +136,7 @@ class _ImageCallback(Callback):
         title: Optional[str] = None,
         global_step: Optional[int] = None,
     ) -> None:
-        if trainer.global_rank != 0:
+        if not trainer.is_global_zero:
             return
         title = title or "images"
         str_title = f"{pl_module.__class__.__name__}_{title}"
@@ -149,124 +151,81 @@ class _ImageCallback(Callback):
             basename = utils.validate_filename(f"{str_title}_{global_step}.png")
             save_tensor_to_image(input, os.path.join(image_dir, basename))
 
-    def _set_data_iter(self, trainer: Trainer, stage: str = "train") -> None:
-        stage = stage.lower()
-        if stage not in {"train", "test", "val", "validation"}:
-            raise ValueError(f"Invalid stage: {stage}")
-        if stage == "validation":
-            stage = "val"
-        datamodule = getattr(trainer, "datamodule", None)
-        if datamodule is not None:
-            dataloader: DataLoader = getattr(
-                datamodule, f"{stage}_dataloader"
-            )()
-            setattr(self, f"_{stage}_data_iter", iter(dataloader))
-            return
-        data_source = getattr(
-            trainer._data_connector, f"_{stage}_dataloader_source"
-        )
-        dataloader = data_source.dataloader()
-        if dataloader is not None:
-            setattr(self, f"_{stage}_data_iter", iter(dataloader))
-            return
-        raise ValueError(
-            f"No {stage} dataloader found for {utils.get_name*(trainer)}."
-        )
+    def _reset_dataloader(self, trainer: Trainer) -> None:
+        for stage in ("train", "val"):
+            source: Optional[_DataLoaderSource] = getattr(
+                trainer._data_connector, f"_{stage}_dataloader_source", None
+            )
+            if source is None:
+                continue
+            dataloader = source.dataloader()
+            if isinstance(dataloader, Mapping):
+                dataset = cast(
+                    DataLoader, next(iter(dataloader.values()))
+                ).dataset
+            elif isinstance(dataloader, Sequence):
+                dataset = cast(DataLoader, dataloader[0]).dataset
+            else:
+                dataset = dataloader.dataset
+            dataloader = DataLoader(
+                dataset,
+                batch_size=self.num_samples,
+                shuffle=False,
+                drop_last=True,
+                num_workers=0,
+            )
+            setattr(self, f"_{stage}_dataloader", dataloader)
+            setattr(self, f"_{stage}_dataloader_iter", iter(dataloader))
 
-    def get_train_batch(self, trainer: Trainer) -> Any:
-        if self._train_data_iter is None:
-            self._set_data_iter(trainer, "train")
-        try:
-            return next(cast(Iterator, self._train_data_iter))
-        except StopIteration:
-            self._set_data_iter(trainer, "train")
-            return next(cast(Iterator, self._train_data_iter))
-
-    def get_test_batch(self, trainer: Trainer) -> Any:
-        if self._test_data_iter is None:
-            self._set_data_iter(trainer, "test")
-        try:
-            return next(cast(Iterator, self._test_data_iter))
-        except StopIteration:
-            self._set_data_iter(trainer, "test")
-            return next(cast(Iterator, self._test_data_iter))
-
-    def get_val_batch(self, trainer: Trainer) -> Any:
-        if self._val_data_iter is None:
-            self._set_data_iter(trainer, "validation")
-        try:
-            return next(cast(Iterator, self._val_data_iter))
-        except StopIteration:
-            self._set_data_iter(trainer, "validation")
-            return next(cast(Iterator, self._val_data_iter))
-
-    def get_fixed_train_batch(self, trainer: Trainer) -> Any:
-        if not self.add_fixed_samples:
-            return
-        if self.fixed_train_batch is None:
-            self.fixed_train_batch = self.get_train_batch(trainer)
-        return self.fixed_train_batch
-
-    def get_fixed_test_batch(self, trainer: Trainer) -> Any:
-        if not self.add_fixed_samples:
-            return
-        if self.fixed_test_batch is None:
-            self.fixed_test_batch = self.get_test_batch(trainer)
-        return self.fixed_test_batch
-
-    def get_fixed_val_batch(self, trainer: Trainer) -> Any:
-        if not self.add_fixed_samples:
-            return
-        if self.fixed_val_batch is None:
-            self.fixed_val_batch = self.get_val_batch(trainer)
-        return self.fixed_val_batch
+    def on_train_start(
+        self, trainer: Trainer, pl_module: LightningModule
+    ) -> None:
+        self._reset_dataloader(trainer)
 
     @property
-    def fixed_train_batch(self) -> Optional[Tuple[Any, ...]]:
-        if self._fixed_train_batch is None:
-            return None
-        return _return_batch(self._fixed_train_batch, self.device)
+    def train_batch(self) -> Tensor:
+        if self._train_dataloader_iter is None:
+            raise ValueError("Train dataloader is not set.")
+        try:
+            return next(self._train_dataloader_iter)
+        except StopIteration:
+            self._train_dataloader_iter = iter(
+                cast(DataLoader, self._train_dataloader)
+            )
+            return self.train_batch
+
+    @property
+    def val_batch(self) -> Tensor:
+        if self._val_dataloader_iter is None:
+            raise ValueError("Validation dataloader is not set.")
+        try:
+            return next(self._val_dataloader_iter)
+        except StopIteration:
+            self._val_dataloader_iter = iter(
+                cast(DataLoader, self._val_dataloader)
+            )
+            return self.val_batch
+
+    @property
+    def fixed_train_batch(self) -> Optional[Any]:
+        if self._fixed_train_batch is None and self.sample_fixed_batch:
+            self._fixed_train_batch = self.train_batch
+        return args_to(
+            self._fixed_train_batch, device=self.device, non_blocking=True
+        )
 
     @fixed_train_batch.setter
-    def fixed_train_batch(self, value: Any) -> None:
-        if isinstance(value, Tensor):
-            value = value.to(device="cpu")
-        else:
-            value = args_to(*value, device=self.device)
-        self._fixed_train_batch = value
+    def fixed_train_batch(self, *args: Any) -> None:
+        self._fixed_train_batch = args_to(*args, device="cpu")
 
     @property
-    def fixed_test_batch(self) -> Optional[Tuple[Any, ...]]:
-        if self._fixed_test_batch is None:
-            return None
-        return _return_batch(self._fixed_test_batch, self.device)
-
-    @fixed_test_batch.setter
-    def fixed_test_batch(self, value: Any) -> None:
-        if isinstance(value, Tensor):
-            value = value.to(device="cpu")
-        else:
-            value = args_to(*value, device=self.device)
-        self._fixed_test_batch = value
-
-    @property
-    def fixed_val_batch(self) -> Optional[Tuple[Any, ...]]:
-        if self._fixed_val_batch is None:
-            return None
-        return _return_batch(self._fixed_val_batch, self.device)
+    def fixed_val_batch(self) -> Optional[Any]:
+        if self._fixed_val_batch is None and self.sample_fixed_batch:
+            self._fixed_val_batch = self.val_batch
+        return args_to(
+            self._fixed_val_batch, device=self.device, non_blocking=True
+        )
 
     @fixed_val_batch.setter
-    def fixed_val_batch(self, value: Any) -> None:
-        if isinstance(value, Tensor):
-            value = value.to(device="cpu")
-        else:
-            value = args_to(*value, device=self.device)
-        self._fixed_val_batch = value
-
-
-def _return_batch(batch: Any, device: Optional[DEVICE] = None) -> Any:
-    if device is None:
-        return batch
-    if isinstance(batch, Tensor):
-        return batch.to(device=device, non_blocking=True)
-    return args_to(*batch, device=device)
+    def fixed_val_batch(self, *args: Any) -> None:
+        self._fixed_val_batch = args_to(*args, device="cpu")
