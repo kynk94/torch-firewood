@@ -292,11 +292,12 @@ class StyleGAN(pl.LightningModule):
         Tensorflow can train 4 batch size with 1024 resolution on V100 GPU.
         However, sometimes pytorch raise OOM error when batch size is 4.
         Because the memory usage of pytorch is slightly higher than tensorflow.
-        And `cuda_extension` use more memory than default operation.
-        If want to train 4 batch size with 1024 resolution, call this function
+        If want to train 4 batch size with 1024 resolution, removing `FID`.
+        (PyTorchLightning does not allow storing FID parameters on CPU memory.)
+        And since `cuda_extension` use more memory than default operation,
+        calling function below will help reduce memory usage.
         `firewood.utils.apply.set_biased_activation_force_default(self, True)`
-        in the `__init__` method to not use `cuda_extension`.
-        And removing `FID` also reduces memory usage.
+        in the end of `__init__` method to not use `cuda_extension`.
         """
         if resolution == 1024:
             return 2
