@@ -102,7 +102,10 @@ class _UpFirDnNd(nn.Module):
             padding = tuple(p + s for p, s in zip(padding, same_padding))
         self.padding = padding
 
-        self.force_default = False
+        if all(u == 1 for u in self.up) and all(d == 1 for d in self.down):
+            self.force_default = True
+        else:
+            self.force_default = False
         self.default_operation = functools.partial(
             upfirdnNd,
             gain=self.gain,

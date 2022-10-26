@@ -7,7 +7,6 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
-from firewood import utils
 from firewood.common.constant import NULL_TENSOR
 from firewood.common.types import DEVICE
 from firewood.layers import activations
@@ -170,14 +169,6 @@ class BiasedActivation(nn.Module):
         self.clamp = clamp if clamp is not None else -1
 
         self.force_default = False
-        self.default_operation = functools.partial(
-            biased_activation,
-            activation_function=activation_dict["func"],
-            alpha=self.alpha,
-            gain=self.gain,
-            clamp=self.clamp,
-            bias_add_dim=self.bias_add_dim,
-        )
         self.register_parameter("bias", None)
         self.to(device=self.device)
 
@@ -191,7 +182,14 @@ class BiasedActivation(nn.Module):
     @property
     def operation(self) -> Callable[..., Tensor]:
         if self.device.type == "cpu" or self.force_default:
-            return self.default_operation
+            return functools.partial(
+                biased_activation,
+                activation_function=ACTIVATIONS[self.activation]["func"],
+                alpha=self.alpha,
+                gain=self.gain,
+                clamp=self.clamp,
+                bias_add_dim=self.bias_add_dim,
+            )
         try:
             return load_cuda_biased_activation(
                 activation=self.activation,
@@ -202,7 +200,7 @@ class BiasedActivation(nn.Module):
             )
         except RuntimeError:
             self.force_default = True
-            return self.default_operation
+            return self.operation
 
     def forward(
         self,
