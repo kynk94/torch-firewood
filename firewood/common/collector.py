@@ -1,6 +1,6 @@
 import inspect
 import weakref
-from typing import Callable, Dict, Iterator
+from typing import Any, Callable, Dict, Iterator, cast
 
 import torch.nn as nn
 
@@ -28,26 +28,26 @@ class Collector:
     @classmethod
     def layers(cls) -> Iterator[nn.Module]:
         for layer in cls.__layers.values():
-            yield layer
+            yield cast(nn.Module, layer)
 
 
-def __layer_new_wrapper(cls) -> Callable[..., object]:
+def __layer_new_wrapper(cls: Any) -> Callable[..., object]:
     func = cls.__new__
 
-    def wrapper(*args, **kwargs) -> object:
+    def wrapper(*args: Any, **kwargs: Any) -> object:
         obj = func(args[0])
-        Collector.add_layer(obj)
+        Collector.add_layer(cast(nn.Module, obj))
         return obj
 
     return wrapper
 
 
-def __layer_del_wrapper(cls) -> Callable[..., None]:
+def __layer_del_wrapper(cls: Any) -> Callable[..., None]:
     func = getattr(cls, "__del__", None)
 
-    def wrapper(*args, **kwargs) -> None:
+    def wrapper(*args: Any, **kwargs: Any) -> None:
         self = args[0]
-        Collector.del_layer(self)
+        Collector.del_layer(cast(nn.Module, self))
         if func:
             func(self)
 
@@ -57,8 +57,8 @@ def __layer_del_wrapper(cls) -> Callable[..., None]:
 def __assign_collector() -> None:
     for name, cls in inspect.getmembers(layers):
         if inspect.isclass(cls) and issubclass(cls, nn.Module):
-            cls.__new__ = __layer_new_wrapper(cls)
-            cls.__del__ = __layer_del_wrapper(cls)
+            setattr(cls, "__new__", __layer_new_wrapper(cls))
+            setattr(cls, "__del__", __layer_del_wrapper(cls))
 
 
 __assign_collector()
