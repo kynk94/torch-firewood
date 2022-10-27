@@ -54,11 +54,11 @@ def __layer_del_wrapper(cls) -> Callable[..., None]:
     return wrapper
 
 
-def __assign_collector__() -> None:
+def __assign_collector() -> None:
     for name, cls in inspect.getmembers(layers):
         if inspect.isclass(cls) and issubclass(cls, nn.Module):
             cls.__new__ = __layer_new_wrapper(cls)
             cls.__del__ = __layer_del_wrapper(cls)
 
 
-__assign_collector__()
+__assign_collector()
