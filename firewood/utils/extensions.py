@@ -115,6 +115,9 @@ class CUDAExtension:
     __cache: Dict[str, Dict[Any, Any]] = defaultdict(dict)
     cuda_cflags = ["--use_fast_math"]
 
+    def __init__(self) -> None:
+        raise RuntimeError("CUDAExtension is not meant to be instantiated.")
+
     @classmethod
     def import_C(cls) -> None:
         if runtime_build():
