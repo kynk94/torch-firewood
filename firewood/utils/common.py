@@ -15,11 +15,46 @@ from typing import (
     overload,
 )
 
+from numpy import ndarray
 from packaging.version import Version
 from pkg_resources import get_distribution
 from torch import Tensor
 
-from firewood.common.types import INT, STR
+from firewood.common.types import FLOAT, INT, NUMBER, STR
+
+
+@overload
+def clamp(input: float, _min: float, _max: float) -> float:
+    ...
+
+
+@overload
+def clamp(input: Sequence[float], _min: float, _max: float) -> Sequence[float]:
+    ...
+
+
+@overload
+def clamp(
+    input: ndarray, _min: Union[float, ndarray], _max: Union[float, ndarray]
+) -> ndarray:
+    ...
+
+
+@overload
+def clamp(
+    input: Tensor, _min: Union[float, Tensor], _max: Union[float, Tensor]
+) -> Tensor:
+    ...
+
+
+def clamp(input: NUMBER, _min: Any, _max: Any) -> NUMBER:
+    if isinstance(input, float):
+        return max(_min, min(input, _max))
+    if isinstance(input, Sequence):
+        return type(input)(clamp(i, _min, _max) for i in input)  # type: ignore
+    if isinstance(input, ndarray):
+        return input.clip(_min, _max)
+    return input.clamp(_min, _max)
 
 
 def is_newer_torch(version: Union[str, int, float]) -> bool:
@@ -164,6 +199,9 @@ def normalize_int_tuple(value: Union[INT, Tensor], n: int) -> Tuple[int, ...]:
     if isinstance(value, int):
         return (value,) * n
 
+    if isinstance(value, map):
+        value = tuple(value)
+
     if not all(isinstance(v, int) for v in value):
         raise TypeError(f"Expected int elements, got {value}.")
 
@@ -175,6 +213,34 @@ def normalize_int_tuple(value: Union[INT, Tensor], n: int) -> Tuple[int, ...]:
             f"The argument must be a tuple of {n} integers, got {value}."
         )
     return tuple(value)
+
+
+def normalize_float_tuple(
+    value: Union[FLOAT, INT, Tensor], n: int
+) -> Tuple[float, ...]:
+    if isinstance(value, Tensor):
+        numel = value.numel()
+        if numel != 1:
+            raise ValueError(f"Expected a tensor with 1 element, got {numel}")
+        value = value.item()
+
+    if isinstance(value, (int, float)):
+        return (float(value),) * n
+
+    if isinstance(value, map):
+        value = tuple(value)
+
+    if not all(isinstance(v, (int, float)) for v in value):
+        raise TypeError(f"Expected float elements, got {value}.")
+
+    if len(value) == 1 or len(set(value)) == 1:
+        return (float(value[0]),) * n
+
+    if len(value) != n:
+        raise ValueError(
+            f"The argument must be a tuple of {n} floats, got {value}."
+        )
+    return tuple(map(float, value))
 
 
 def makedirs(*path: str) -> str:
@@ -261,27 +327,40 @@ def highest_power_of_2(n: int) -> int:
     return 2 ** (n.bit_length() - 1)
 
 
+def maximum_multiple_of_divisor(n: int, divisor: int) -> int:
+    """
+    Return the maximum multiple of `divisor` that is less than or equal to `n`.
+    If `divisor` is larger than `n`, return 0.
+    """
+    return n - (n % divisor)
+
+
 def squared_number(n: Union[int, float]) -> int:
     """
-    Return square root of n if n is a perfect square using Babylonian algorithm.
-    n must be a positive integer. Otherwise, if n is a positive float number,
-    it must have zero decimal places.
+    Return square root of `n` if `n` is a perfect square using Babylonian
+    algorithm. `n` must be a positive integer. Otherwise, if `n` is a positive
+    float number, it must have zero decimal places.
+
+    Returns:
+        The square root of `n` if is a perfect square, otherwise 0.
     """
     if n < 1:
-        raise ValueError("n must be a positive integer.")
-    if isinstance(n, float) and not n.is_integer():  # type: ignore
-        return 0
+        raise ValueError("`n` must be a positive integer.")
+    if isinstance(n, float):
+        if not cast(float, n).is_integer():
+            return 0
+        n = int(n)
 
-    x = n // 2
+    x = int(n // 2)
     if x == 0:
         if n == 1:
             return 1
         return 0
 
-    cache = set((x,))
+    cache = {x}
     while x * x != n:
         x = (x + (n // x)) // 2
         if x in cache:
             return 0
         cache.add(x)
-    return int(x)
+    return x

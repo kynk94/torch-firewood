@@ -16,7 +16,7 @@ class LatentDimInterpolator(_ImageCallback):
     """
     LatentDimInterpolator
 
-    Unlike the original implementation, store output images on the CPU.
+    Unlike the original implementation, store output images to the CPU memory.
     """
 
     def __init__(
@@ -33,7 +33,7 @@ class LatentDimInterpolator(_ImageCallback):
         scale_each: bool = False,
         pad_value: int = 0,
         save_image: bool = False,
-        grid_max_resolution: Optional[int] = None,
+        grid_max_resolution: Optional[int] = 4096,
     ):
         super().__init__(
             step=step,
@@ -44,7 +44,7 @@ class LatentDimInterpolator(_ImageCallback):
             normalize=normalize,
             norm_range=norm_range,
             on_epoch_end=on_epoch_end,
-            add_fixed_samples=False,
+            log_fixed_batch=False,
             scale_each=scale_each,
             pad_value=pad_value,
             save_image=save_image,
@@ -108,6 +108,8 @@ class LatentDimInterpolator(_ImageCallback):
         pl_module: LightningModule,
         title: Optional[str] = None,
     ) -> None:
+        if not trainer.is_global_zero:
+            return
         title = title or "interpolation"
         latent_dim = getattr(pl_module.hparams, "latent_dim", None)
         if latent_dim is None:
@@ -118,32 +120,22 @@ class LatentDimInterpolator(_ImageCallback):
         pl_module.eval()
         for z_x in np.linspace(*self.latent_range, num=self.nrow):
             for z_y in np.linspace(*self.latent_range, num=self.nrow):
-                # set all dims to zero
                 z = torch.zeros(1, latent_dim, device=pl_module.device)
-
-                # set the dim to interpolate
-
                 div, mod = divmod(ndim_to_interpolate, 2)
                 z[:, : div + mod] = torch.tensor(z_x)
                 z[:, -div:] = torch.tensor(z_y)
-
-                # sample
-                # generate images
-                img: Tensor = pl_module(z)
-
-                if len(img.size()) == 2:
-                    img_dim = getattr(pl_module, "img_dim", None)
-                    if img_dim is None:
-                        img = batch_flat_to_square(img)
+                image: Tensor = pl_module(z)
+                if len(image.size()) == 2:
+                    image_dim = getattr(pl_module, "img_dim", None)
+                    if image_dim is None:
+                        image = batch_flat_to_square(image)
                     else:
-                        img = img.view(-1, *img_dim)
-
-                images.append(img.detach().cpu())
+                        image = image.view(-1, *image_dim)
+                images.append(image.detach().cpu())
         pl_module.train()
 
         images = torch.cat(images, dim=0)
-        grid = self._make_grid(images)
-        self.log_image(trainer, pl_module, grid, title=title)
+        self.log_image(trainer, pl_module, self._make_grid(images), title=title)
 
 
 class ConditionInterpolator(_ImageCallback):
@@ -166,7 +158,7 @@ class ConditionInterpolator(_ImageCallback):
         scale_each: bool = False,
         pad_value: int = 0,
         save_image: bool = False,
-        grid_max_resolution: Optional[int] = None,
+        grid_max_resolution: Optional[int] = 4096,
     ):
         super().__init__(
             step=step,
@@ -177,7 +169,7 @@ class ConditionInterpolator(_ImageCallback):
             normalize=normalize,
             norm_range=norm_range,
             on_epoch_end=on_epoch_end,
-            add_fixed_samples=False,
+            log_fixed_batch=False,
             scale_each=scale_each,
             pad_value=pad_value,
             save_image=save_image,
@@ -260,6 +252,8 @@ class ConditionInterpolator(_ImageCallback):
         pl_module: LightningModule,
         title: Optional[str] = None,
     ) -> None:
+        if not trainer.is_global_zero:
+            return
         title = title or "interpolation"
         if self.conditions_base is None:
             condition_dim = search_attr(
@@ -275,35 +269,28 @@ class ConditionInterpolator(_ImageCallback):
         pl_module.eval()
         for z_x in np.linspace(*self.conditions_range, num=self.nrow):
             for z_y in np.linspace(*self.conditions_range, num=self.nrow):
-                # set all dims to zero
                 if self.conditions_base is None:
-                    z = torch.zeros(size=(1, condition_dim))
+                    z = torch.zeros(
+                        size=(1, condition_dim), device=pl_module.device
+                    )
                 else:
-                    z = self.conditions_base.clone()
-
-                # set the dim to interpolate
+                    z = self.conditions_base.clone().to(
+                        device=pl_module.device, non_blocking=True
+                    )
                 div, mod = divmod(len(self.target_dims), 2)
                 target_x = self.target_dims[: div + mod]
                 target_y = self.target_dims[-div:]
                 z[:, target_x] = torch.tensor(z_x, dtype=z.dtype)
                 z[:, target_y] = torch.tensor(z_y, dtype=z.dtype)
-
-                # sample
-                # generate images
-                img: Tensor = pl_module(
-                    z.to(device=pl_module.device, non_blocking=True)
-                )
-
-                if len(img.size()) == 2:
-                    img_dim = getattr(pl_module, "img_dim", None)
-                    if img_dim is None:
-                        img = batch_flat_to_square(img)
+                image: Tensor = pl_module(z)
+                if len(image.size()) == 2:
+                    image_dim = getattr(pl_module, "img_dim", None)
+                    if image_dim is None:
+                        image = batch_flat_to_square(image)
                     else:
-                        img = img.view(-1, *img_dim)
-
-                images.append(img.detach().cpu())
+                        image = image.view(-1, *image_dim)
+                images.append(image.detach().cpu())
         pl_module.train()
 
         images = torch.cat(images, dim=0)
-        grid = self._make_grid(images)
-        self.log_image(trainer, pl_module, grid, title=title)
+        self.log_image(trainer, pl_module, self._make_grid(images), title=title)

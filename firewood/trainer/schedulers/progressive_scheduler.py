@@ -1,9 +1,8 @@
-from typing import Dict, Tuple
+import math
+from typing import Dict, Optional, Tuple
 
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import _LRScheduler
-
-DEFAULT_LR = {128: 0.0015, 256: 0.002, 512: 0.003, 1024: 0.003}
 
 
 class ProgressiveScheduler(_LRScheduler):
@@ -19,20 +18,23 @@ class ProgressiveScheduler(_LRScheduler):
         dataset_size: int = 60000,  # 60k train images in FFHQ, total 70k
         initial_resolution: int = 4,
         max_resolution: int = 1024,
-        level_epoch: float = 10.0,
         fade_epoch: float = 10.0,
+        level_epoch: float = 10.0,
         ramp_up_epoch: float = 0.0,
-        lr_dict: Dict[int, float] = DEFAULT_LR,
+        lr_dict: Optional[Dict[int, float]] = None,
         last_epoch: int = -1,
     ) -> None:
         self.dataset_size = dataset_size
         self.initial_resolution = initial_resolution
         self.max_resolution = max_resolution
-        self.level_epoch = level_epoch
         self.fade_epoch = fade_epoch
+        self.level_epoch = level_epoch
         self.ramp_up_epoch = ramp_up_epoch
-        self.lr_dict = lr_dict
+        self.lr_dict = lr_dict or dict()
 
+        self.max_phase = int(
+            math.log2(self.max_resolution / self.initial_resolution)
+        )
         self.viewed_key_images = 0
         self.phase = 0
         self.alpha = 1.0
@@ -42,28 +44,31 @@ class ProgressiveScheduler(_LRScheduler):
 
     def update(self, viewed_key_images: int) -> None:
         """
-        key_images: new phase            level_epoch                  fade_epoch
-        alpha:      1 ----------------- decrease start ----------------------- 0
+        Update the scheduler state.
+
+        Unlike the official implementation, intuitively designed to increase
+        the alpha from 0 to 1 during fade epoch.
+
+        key_images:    new phase         fade_epoch done        level_epoch done
+        alpha:      increase from 0 ----------- 1 -------------------- 1
+        resolution:        n  ----------------- n ------------------ 2 * n
         """
         self.viewed_key_images += viewed_key_images
-        if self.resolution == self.max_resolution:
-            return
 
-        level_key_images = int(self.dataset_size * self.level_epoch)
         fade_key_images = int(self.dataset_size * self.fade_epoch)
-        phase_key_images = level_key_images + fade_key_images
+        level_key_images = int(self.dataset_size * self.level_epoch)
+        phase_key_images = fade_key_images + level_key_images
         phase, phase_viewed_images = divmod(
             self.viewed_key_images, phase_key_images
         )
-        alpha = 1.0
-        if phase_viewed_images > level_key_images:
-            alpha -= (phase_viewed_images - level_key_images) / fade_key_images
-
-        resolution = min(
-            int(self.initial_resolution * 2**phase), self.max_resolution
-        )
-        if resolution == self.max_resolution:
+        if phase == 0:
             alpha = 1.0
+        elif phase > self.max_phase:
+            alpha = 1.0
+            phase = self.max_phase
+        else:
+            alpha = min(phase_viewed_images / fade_key_images, 1.0)
+        resolution = int(self.initial_resolution * 2**phase)
 
         self.phase = phase
         self.alpha = alpha

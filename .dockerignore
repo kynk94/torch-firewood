@@ -6,3 +6,5 @@ dist
 *.egg
 *.ipynb
 .git
+*.pt
+*.pkl

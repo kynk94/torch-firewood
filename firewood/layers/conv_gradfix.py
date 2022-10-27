@@ -742,7 +742,6 @@ def _load_operation(
         "padding": padding,
     }
 
-    conv_operation: Callable[..., Tensor]
     # conv_weight_cudnn is deprecated in torch 1.11.0
     # But, grad.convNd_weight has out of memory issue.
     conv_weight_cudnn_deprecated = False  # utils.is_newer_torch("1.11.0")

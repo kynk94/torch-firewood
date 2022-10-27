@@ -3,6 +3,7 @@ import hashlib
 import importlib
 import os
 import platform
+import shutil
 import warnings
 from collections import defaultdict
 from types import ModuleType
@@ -18,6 +19,19 @@ _CUDA_SOURCES = sorted(
     glob.glob(os.path.join(_PROJECT_ROOT, "csrc", "**", "*.c*"), recursive=True)
 )
 _CACHED_EXTENSIONS: Dict[str, ModuleType] = dict()
+
+
+def user_cache_dir(appname: str = "torch_extensions") -> str:
+    system = platform.system().lower()
+    if system == "windows":
+        raise ImportError(f"Please manually clear {appname} cache.")
+    if system == "darwin":
+        path = os.path.expanduser("~/Library/Caches")
+    else:
+        path = os.getenv("XDG_CACHE_HOME", os.path.expanduser("~/.cache"))
+    if appname:
+        path = os.path.join(path, appname)
+    return path
 
 
 def _find_windows_compiler() -> Union[str, None]:
@@ -49,7 +63,7 @@ def load_extension(
     if name in _CACHED_EXTENSIONS:
         return _CACHED_EXTENSIONS[name]
 
-    print("Loading extension...")
+    print("Loading CPP extension...")
 
     if platform.system() == "Windows" and not is_success(
         os.system("where cl.exe >nul 2>nul")
@@ -62,13 +76,24 @@ def load_extension(
             )
         os.environ["PATH"] = found_compiler + ";" + os.environ["PATH"]
 
-    module = cpp_extension.load(
-        name=name,
-        sources=sources,
-        is_python_module=True,
-        extra_cuda_cflags=extra_cuda_cflags,
-        **kwargs,
-    )
+    try:
+        module = cpp_extension.load(
+            name=name,
+            sources=sources,
+            is_python_module=True,
+            extra_cuda_cflags=extra_cuda_cflags,
+            **kwargs,
+        )
+    except ImportError:
+        cache_dir = user_cache_dir()
+        shutil.rmtree(cache_dir, ignore_errors=True)
+        module = cpp_extension.load(
+            name=name,
+            sources=sources,
+            is_python_module=True,
+            extra_cuda_cflags=extra_cuda_cflags,
+            **kwargs,
+        )
     try:
         module = importlib.import_module(name)
     except Exception:
@@ -89,6 +114,9 @@ class CUDAExtension:
     __use_prebuild = True
     __cache: Dict[str, Dict[Any, Any]] = defaultdict(dict)
     cuda_cflags = ["--use_fast_math"]
+
+    def __init__(self) -> None:
+        raise RuntimeError("CUDAExtension is not meant to be instantiated.")
 
     @classmethod
     def import_C(cls) -> None:

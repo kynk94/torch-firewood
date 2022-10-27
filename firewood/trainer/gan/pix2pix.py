@@ -7,11 +7,10 @@ import albumentations.pytorch.transforms as AT
 import pytorch_lightning as pl
 import torch
 import torch.nn.functional as F
-from pytorch_lightning.loggers import TensorBoardLogger
 from torch import Tensor
 from torchvision import transforms
 
-from firewood.common.backend import set_runtime_build, set_seed
+from firewood.common.backend import set_runtime_build
 from firewood.models.gan.pix2pix import Generator, PatchGAN
 from firewood.trainer.callbacks import I2ISampler, ModelCheckpoint
 from firewood.trainer.losses import gan_loss
@@ -168,7 +167,7 @@ def main():
     args = vars(parser.parse_args())
     # fmt: on
 
-    set_seed(0)
+    pl.seed_everything(0)
 
     if args["runtime_build"]:
         set_runtime_build(True)
@@ -214,21 +213,16 @@ def main():
     in_channels = sample_source.shape[1]
     out_channels = sample_target.shape[1]
 
-    if args["checkpoint"] is not None:
-        pix2pix = Pix2Pix.load_from_checkpoint(
-            find_checkpoint(args["checkpoint"])
-        )
-    else:
-        pix2pix = Pix2Pix(
-            in_channels=in_channels,
-            out_channels=out_channels,
-            learning_rate=2e-4,
-            weight_reconstruction=1e2,
-        )
+    pix2pix = Pix2Pix(
+        in_channels=in_channels,
+        out_channels=out_channels,
+        learning_rate=2e-4,
+        weight_reconstruction=1e2,
+    )
 
     callbacks = [
         ModelCheckpoint(save_last_k=3),
-        I2ISampler(step=500, add_fixed_samples=True),
+        I2ISampler(step=500, log_fixed_batch=True),
     ]
     gpus = torch.cuda.device_count()
     trainer = pl.Trainer(
@@ -242,10 +236,15 @@ def main():
         strategy="ddp" if gpus > 1 else None,
     )
     trainer.logger._default_hp_metric = False
+
+    ckpt_path = (
+        find_checkpoint(args["checkpoint"]) if args["checkpoint"] else None
+    )
     trainer.fit(
         pix2pix,
         train_dataloaders=train_dataloader,
         val_dataloaders=val_dataloader or test_dataloader,
+        ckpt_path=ckpt_path,
     )
 
 

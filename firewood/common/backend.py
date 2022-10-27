@@ -60,16 +60,22 @@ def seed() -> Optional[int]:
     return _seed
 
 
-def set_seed(seed: int) -> int:
-    if not isinstance(seed, int):
+def set_seed(seed: Optional[int] = None) -> int:
+    if seed is None:
+        seed = random.randint(0, 2**32 - 1)
+    elif not isinstance(seed, int):
         raise TypeError("seed must be int")
     global _seed
     _seed = seed
 
     os.environ["PYTHONHASHSEED"] = str(seed)
-    random.seed(seed)
-    np.random.seed(seed)
-    torch.manual_seed(seed)
-    if torch.cuda.is_available():
+    try:
+        import pytorch_lightning as pl
+
+        pl.seed_everything(seed)
+    except ImportError:
+        random.seed(seed)
+        np.random.seed(seed)
+        torch.manual_seed(seed)
         torch.cuda.manual_seed_all(seed)
     return _seed

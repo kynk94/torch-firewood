@@ -6,11 +6,17 @@ https://arxiv.org/abs/1812.04948
 
 Differences from the official implementation:
     official:
-        Uses weight size of noise as 'inputs channels'.
+      * Uses weight size of noise as 'inputs channels'.
         By the way, official StyleGAN2 uses weight size of noise as '1'.
+      * Uses gain as 'sqrt(2)' for all layers except ToRGB and last layers.
+      * Uses instance normalization without bessel's correction.
     this:
-        Uses weight size of noise as '1' for convenience, following to the
+      * Uses weight size of noise as '1' for convenience, following to the
         implementation of official StyleGAN2.
+      * Uses gain as '1' for all layers, following to the implementation of
+        official StyleGAN2.
+      * Uses instance normalization with bessel's correction, following to the
+        implementation of official AdaIN.
 
 Therefore, the difference in the total number of parameters come from
 the noise layers.
@@ -18,10 +24,12 @@ See bottom of this file to check the number of parameters of official StyleGAN.
 """
 import argparse
 import math
+import random
 from typing import Optional, Tuple, Union
 
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 from torch import Tensor
 
 from firewood import hooks, layers, utils
@@ -109,23 +117,26 @@ class InitialBlock(nn.Module):
         self,
         style_dim: int,
         in_channels: int,
+        out_channels: int,
+        kernel_size: int = 3,
+        stride: int = 1,
+        padding: Union[str, int] = "same",
         initial_resolution: int = 4,
         bias: bool = True,
         activation: str = "lrelu",
         noise: Optional[str] = "normal",
-        trainable_input: bool = False,
     ) -> None:
         super().__init__()
         self.style_dim = style_dim
         self.in_channels = in_channels
+        self.out_channels = out_channels
         self.initial_resolution = initial_resolution
         self.input = nn.Parameter(
-            torch.randn(
+            torch.ones(
                 self.in_channels,
                 self.initial_resolution,
                 self.initial_resolution,
-            ),
-            requires_grad=trainable_input,
+            )
         )
         if bias:
             self.bias = nn.Parameter(torch.zeros(self.in_channels))
@@ -136,11 +147,28 @@ class InitialBlock(nn.Module):
         self.adain = layers.AdaptiveNorm(
             self.in_channels, self.style_dim, use_projection=True
         )
+        self.conv_adain = layers.Conv2dBlock(
+            self.in_channels,
+            self.out_channels,
+            kernel_size,
+            stride,
+            padding,
+            bias=bias,
+            activation=activation,
+            noise=noise,
+            op_order="WAN",
+        )
+        self.conv_adain.update_layer_in_order(
+            "normalization",
+            layers.AdaptiveNorm(out_channels, style_dim, use_projection=True),
+        )
 
     def forward(self, input: Tensor) -> Tensor:
         """
         input: style vector (w)
         """
+        if input.ndim == 2:
+            input = input.unsqueeze(1).expand(-1, 2, -1)
         output = self.input.expand(input.size(0), -1, -1, -1)
         if self.noise is not None:
             output = self.noise(output)
@@ -148,7 +176,8 @@ class InitialBlock(nn.Module):
             output = output + self.bias.view(1, -1, 1, 1)
         if self.activation is not None:
             output = self.activation(output)
-        output = self.adain(output, input)
+        output = self.adain(output, input[:, 0])
+        output = self.conv_adain(output, input[:, 1])
         return output
 
 
@@ -178,7 +207,7 @@ class UpConvConvBlock(nn.Module):
             op_order="WAN",
         )
         self.conv_adain_1 = layers.Conv2dBlock(
-            in_channels, out_channels, fir=fir, fir_args=dict(up=up), **kwargs
+            in_channels, out_channels, fir=fir, up=up, **kwargs
         )
         self.conv_adain_1.update_layer_in_order(
             "normalization",
@@ -193,8 +222,10 @@ class UpConvConvBlock(nn.Module):
         )
 
     def forward(self, input: Tensor, style: Tensor) -> Tensor:
-        output = self.conv_adain_1(input, style)
-        output = self.conv_adain_2(output, style)
+        if style.ndim == 2:
+            style = style.unsqueeze(1).expand(-1, 2, -1)
+        output = self.conv_adain_1(input, style[:, 0])
+        output = self.conv_adain_2(output, style[:, 1])
         return output
 
 
@@ -222,7 +253,9 @@ class SynthesisNetwork(nn.Module):
         self.initial_input_type = initial_input_type
         self.resolution = self._check_resolution(resolution)
         self.image_channels = image_channels
-        self.n_layers = int(math.log2(self.resolution)) - 1
+        self.n_layers = (
+            int(math.log2(self.resolution / self.initial_resolution)) + 1
+        )
 
         self.layers = nn.ModuleDict()
         self.to_images = nn.ModuleDict()
@@ -243,17 +276,13 @@ class SynthesisNetwork(nn.Module):
                     decay=self.channels_decay,
                 )
                 out_channels = in_channels
-                self.layers["initial"] = self._get_initial_block(in_channels)
-                block = layers.Conv2dBlock(
-                    in_channels, out_channels, op_order="WAN", **conv_kwargs
+                self.layers[str(resolution)] = InitialBlock(
+                    style_dim=self.style_dim,
+                    in_channels=in_channels,
+                    out_channels=out_channels,
+                    initial_resolution=self.initial_resolution,
+                    **conv_kwargs,
                 )
-                block.update_layer_in_order(
-                    "normalization",
-                    layers.AdaptiveNorm(
-                        in_channels, style_dim, use_projection=True
-                    ),
-                )
-                self.layers[str(resolution)] = block
             else:
                 in_channels = out_channels
                 out_channels = _get_channels(
@@ -271,7 +300,7 @@ class SynthesisNetwork(nn.Module):
                 )
 
             self.to_images[str(resolution)] = layers.GFixConv2d(
-                out_channels, self.image_channels, 3, 1, "same", bias=True
+                out_channels, self.image_channels, 1, 1, 0, bias=True
             )
 
         if lr_equalization:
@@ -286,29 +315,32 @@ class SynthesisNetwork(nn.Module):
         """
         Args:
             input: style vector (w)
-            alpha: interpolation factor of progressive growing
+            alpha: interpolation factor of progressive growing, increase
+                from 0 to 1 during new phase.
             resolution: resolution of output image
         """
         if resolution is None:
             resolution = self.resolution
 
-        for name, layer in self.layers.items():
-            if name == "initial":
-                output = layer(input)
-                continue
+        if input.ndim == 2:
+            input = input.unsqueeze(1).expand(-1, self.n_layers * 2, -1)
 
-            prev_output = output
-            output = layer(output, input)
+        for index, (name, layer) in enumerate(self.layers.items()):
+            style = input[:, index * 2 : index * 2 + 2]
+            if name == str(self.initial_resolution):
+                output = layer(style)
+            else:
+                prev_output = output
+                output = layer(output, style)
             if name != str(resolution):
                 continue
-
             image = self.to_images[str(resolution)](output)
             if resolution > self.initial_resolution and 0.0 <= alpha < 1.0:
                 lower_image = self.to_images[str(resolution // 2)](prev_output)
-                upsampled_lower_image = utils.image.upsample(
-                    lower_image, factor=2, mode="nearest"
+                upsampled_lower_image = F.interpolate(
+                    lower_image, scale_factor=2, mode="nearest"
                 )
-                image = (1.0 - alpha) * upsampled_lower_image + alpha * image
+                image = torch.lerp(upsampled_lower_image, image, alpha)
             output = image
             break
         return output
@@ -316,12 +348,15 @@ class SynthesisNetwork(nn.Module):
     @torch.no_grad()
     def inference_all(self, input: Tensor) -> Tuple[Tensor, ...]:
         self.eval()
+        if input.ndim == 2:
+            input = input.unsqueeze(1).expand(-1, self.n_layers * 2, -1)
         images = []
-        for name, layer in self.layers.items():
-            if name == "initial":
-                output = layer(input)
-                continue
-            output = self.layers[name](output, input)
+        for index, (name, layer) in enumerate(self.layers.items()):
+            style = input[:, index * 2 : index * 2 + 2]
+            if name == str(self.initial_resolution):
+                output = layer(style)
+            else:
+                output = layer(output, style)
             images.append(self.to_images[name](output))
         self.train()
         return tuple(images)
@@ -337,22 +372,7 @@ class SynthesisNetwork(nn.Module):
             )
         return resolution
 
-    def _get_initial_block(self, in_channels: int) -> nn.Module:
-        kwargs = dict(
-            in_channels=in_channels,
-            style_dim=self.style_dim,
-            initial_resolution=self.initial_resolution,
-        )
-        if self.initial_input_type == "constant":
-            return InitialBlock(trainable_input=False, **kwargs)
-        if self.initial_input_type == "trainable":
-            return InitialBlock(trainable_input=True, **kwargs)
-        raise ValueError(
-            "Currently one of {'constant', 'trainable'} is supported as "
-            f"`initial_input_type`. Received {self.initial_input_type}"
-        )
-
-    def reduce_model_for_inference(self) -> None:
+    def reduce_for_inference(self) -> None:
         """
         Remove all `to_images` except the last one.
         If only using model for inference, such as ONNX, this method is useful
@@ -362,6 +382,135 @@ class SynthesisNetwork(nn.Module):
         for name in self.to_images.keys():
             if name != str(self.resolution):
                 del self.to_images[name]
+
+
+# ------------------------------------------------------------------------------
+class Generator(nn.Module):
+    style_avg: Tensor
+
+    def __init__(
+        self,
+        latent_dim: int = 512,
+        label_dim: int = 0,
+        style_dim: int = 512,
+        max_channels: int = 512,
+        activation: str = "lrelu",
+        noise: Optional[str] = "normal",
+        fir: NUMBER = [1, 2, 1],
+        resolution: int = 1024,
+        image_channels: int = 3,
+        truncation_cutoff: int = 8,
+        style_avg_beta: Optional[float] = 0.995,
+        style_mixing_probability: Optional[float] = 0.9,
+        lr_equalization: bool = True,
+        mapping_lr_multiplier: float = 0.01,
+        synthesis_lr_multiplier: float = 1.0,
+    ) -> None:
+        super().__init__()
+        self.mapping = MappingNetwork(
+            latent_dim=latent_dim,
+            label_dim=label_dim,
+            style_dim=style_dim,
+            activation=activation,
+            lr_equalization=lr_equalization,
+            lr_multiplier=mapping_lr_multiplier,
+        )
+        self.synthesis = SynthesisNetwork(
+            style_dim=style_dim,
+            max_channels=max_channels,
+            activation=activation,
+            noise=noise,
+            fir=fir,
+            resolution=resolution,
+            image_channels=image_channels,
+            lr_equalization=lr_equalization,
+            lr_multiplier=synthesis_lr_multiplier,
+        )
+
+        self.truncation_cutoff = truncation_cutoff
+        self.style_avg_beta = style_avg_beta
+        self.style_mixing_probability = utils.clamp(
+            style_mixing_probability, 0.0, 1.0
+        )
+        self.register_buffer("style_avg", torch.zeros(style_dim))
+
+    def forward(
+        self,
+        input: Tensor,
+        label: Optional[Tensor] = None,
+        truncation: Optional[float] = 0.7,
+        alpha: float = 1.0,
+        resolution: Optional[int] = None,
+    ) -> Tensor:
+        if resolution is None:
+            resolution = self.synthesis.resolution
+
+        style: Tensor = self.mapping(input, label)
+        style = style.unsqueeze(1).expand(-1, self.synthesis.n_layers * 2, -1)
+
+        if self.training and self.style_avg_beta is not None:
+            with torch.no_grad():
+                self.style_avg.copy_(
+                    torch.lerp(
+                        style[:, 0].mean(0),
+                        self.style_avg,
+                        self.style_avg_beta,
+                    )
+                )
+
+        layer_index = torch.arange(
+            self.synthesis.n_layers * 2, device=input.device
+        ).view(1, -1, 1)
+        if (
+            self.training
+            and self.style_mixing_probability is not None
+            and random.random() < self.style_mixing_probability
+        ):
+            mixing_input = torch.randn_like(input)
+            mixing_style: Tensor = self.mapping(mixing_input, label)
+            mixing_style = mixing_style.unsqueeze(1).expand(
+                -1, self.synthesis.n_layers * 2, -1
+            )
+            current_index = 2 + 2 * math.log2(
+                resolution / self.synthesis.initial_resolution
+            )
+            mixing_cutoff = random.randint(1, int(current_index))
+            style = torch.where(
+                layer_index < mixing_cutoff, style, mixing_style
+            )
+        if truncation is not None and self.truncation_cutoff is not None:
+            truncation = utils.clamp(truncation, 0.0, 1.0)
+            style = torch.where(
+                layer_index < self.truncation_cutoff,
+                torch.lerp(self.style_avg, style, truncation),
+                style,
+            )
+        image = self.synthesis(style, alpha, resolution)
+        return image
+
+    @torch.no_grad()
+    def inference_all(
+        self,
+        input: Tensor,
+        label: Optional[Tensor] = None,
+        truncation: float = 0.7,
+    ) -> Tuple[Tensor, ...]:
+        self.eval()
+        style: Tensor = self.mapping(input, label)
+        style = style.unsqueeze(1).expand(-1, self.synthesis.n_layers * 2, -1)
+        if truncation is not None and self.truncation_cutoff is not None:
+            truncation = utils.clamp(truncation, 0.0, 1.0)
+            layer_index = torch.arange(
+                self.synthesis.n_layers * 2, device=input.device
+            ).view(1, -1, 1)
+            style = torch.where(
+                layer_index < self.truncation_cutoff,
+                torch.lerp(self.style_avg, style, truncation),
+                style,
+            )
+        images = self.synthesis.inference_all(style)
+        self.train()
+        return images
 
 
 # ------------------------------------------------------------------------------
@@ -393,7 +542,7 @@ class ConvConvDownBlock(nn.Module):
             in_channels,
             out_channels,
             fir=fir,
-            fir_args=dict(down=down),
+            down=down,
             **kwargs,
         )
 
@@ -404,7 +553,7 @@ class ConvConvDownBlock(nn.Module):
 
 
 class Discriminator(nn.Module):
-    last_resolution = 4
+    initial_resolution = 4
 
     def __init__(
         self,
@@ -426,7 +575,9 @@ class Discriminator(nn.Module):
         self.mbstd_group = mbstd_group
         self.resolution = resolution
         self.image_channels = image_channels
-        self.n_layers = int(math.log2(self.resolution)) - 1
+        self.n_layers = (
+            int(math.log2(self.resolution / self.initial_resolution)) + 1
+        )
 
         self.layers = nn.ModuleDict()
         self.from_images = nn.ModuleDict()
@@ -491,22 +642,23 @@ class Discriminator(nn.Module):
         """
         Args:
             input: (batch_size, image_channels, resolution, resolution)
-            alpha: interpolation factor of progressive growing
+            alpha: interpolation factor of progressive growing, increase
+                from 0 to 1 during new phase.
         """
         resolution = input.size(-1)
 
         output: Tensor = self.from_images[str(resolution)](input)
         for i in range(int(math.log2(resolution)) - 2, -1, -1):
-            current_resolution = 2 ** (i + 2)
+            current_resolution = self.initial_resolution * 2**i
             output = self.layers[str(current_resolution)](output)
             if (
-                current_resolution == resolution > self.last_resolution
+                current_resolution == resolution > self.initial_resolution
                 and 0.0 <= alpha < 1.0
             ):
                 lower_output = self.from_images[str(resolution // 2)](
                     utils.image.nearest_downsample(input, 2)
                 )
-                output = (1.0 - alpha) * lower_output + alpha * output
+                output = torch.lerp(lower_output, output, alpha)
         output = self.layers["last"](output)
         if label is not None:
             output = (output * label).sum(dim=1, keepdim=True)
@@ -536,19 +688,14 @@ def main() -> None:
             self,
             latent_dim: int = 512,
             style_dim: int = 512,
-            label_dim: int = 8,
+            label_dim: int = 0,
             resolution: int = 1024,
         ) -> None:
             super().__init__()
-            self.mapping = MappingNetwork(
+            self.generator = Generator(
                 latent_dim=latent_dim,
+                style_dim=style_dim,
                 label_dim=label_dim,
-                hidden_dim=latent_dim,
-                style_dim=style_dim,
-                n_layers=8,
-            )
-            self.synthesis = SynthesisNetwork(
-                style_dim=style_dim,
                 resolution=resolution,
             )
             self.discriminator = Discriminator(
@@ -561,9 +708,9 @@ def main() -> None:
                 self.example_input_array += (torch.empty(2, label_dim),)
 
         def forward(self, input: Tensor, label: Optional[Tensor] = None) -> Tensor:  # type: ignore
-            style_vector: Tensor = self.mapping(input, label)
-            alpha_test = self.synthesis(style_vector, alpha=0.5)
-            images = self.synthesis.inference_all(style_vector)
+            image = self.generator(input, label, alpha=0.5)
+            style_vector: Tensor = self.generator.mapping(input, label)
+            images = self.generator.synthesis.inference_all(style_vector)
             for image in reversed(images):
                 score = self.discriminator(image, label=label)
             return score

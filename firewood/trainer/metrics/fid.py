@@ -28,7 +28,7 @@ def _to_resize_lib(resize_lib: Union[str, RESIZE_LIB]) -> RESIZE_LIB:
         return RESIZE_LIB.TORCH
     if resize_lib.startswith("pil"):
         return RESIZE_LIB.PIL
-    if resize_lib.startswith("tf"):
+    if resize_lib.startswith(("tf", "tensor")):
         return RESIZE_LIB.TF
     raise ValueError(f"Unknown resize library: {resize_lib}")
 
@@ -58,7 +58,6 @@ class FrechetInceptionDistance(FID):
             return images
 
         target_resolution = _pair(size or self.inception_resolution)
-        device = images.device
         if self.resize_lib == RESIZE_LIB.TORCH:
             return TFT.resize(
                 img=images,
@@ -79,7 +78,7 @@ class FrechetInceptionDistance(FID):
                     channels.append(np.array(resized_channel))
                 resized_images.append(np.stack(channels, axis=0))
             resized_tensor = torch.from_numpy(np.stack(resized_images, axis=0))
-            return resized_tensor.to(device=device)
+            return resized_tensor.to(device=images.device)
         raise ValueError(f"Not supported resize library: {self.resize_lib}")
 
     @torch.no_grad()
@@ -96,10 +95,10 @@ class FrechetInceptionDistance(FID):
             else, images should be in range of (0, 255).
         """
         if images.size(1) == 1:
-            images = images.repeat(1, 3, 1, 1)
+            images = images.expand(-1, 3, -1, -1)
         elif images.size(1) > 3:
             warnings.warn("Images with more than 3 channels are not supported.")
-            images = images[:, :3, :, :]
+            images = images[:, :3]
 
         if normalize:
             images = (images - images_range[0]) / (

@@ -1,5 +1,5 @@
 import math
-from typing import Any, Optional, Tuple
+from typing import Any, Dict, Optional, Tuple
 
 import torch
 from pytorch_lightning import LightningModule, Trainer
@@ -21,11 +21,11 @@ class LatentImageSampler(_ImageCallback):
         normalize: bool = True,
         norm_range: Tuple[int, int] = (-1, 1),
         on_epoch_end: bool = True,
-        add_fixed_samples: bool = False,
+        log_fixed_batch: bool = False,
         scale_each: bool = False,
         pad_value: int = 0,
         save_image: bool = False,
-        **kwargs: Any,
+        sample_args: Optional[Dict[str, Any]] = None,
     ) -> None:
         super().__init__(
             step=step,
@@ -36,11 +36,11 @@ class LatentImageSampler(_ImageCallback):
             normalize=normalize,
             norm_range=norm_range,
             on_epoch_end=on_epoch_end,
-            add_fixed_samples=add_fixed_samples,
+            log_fixed_batch=log_fixed_batch,
             scale_each=scale_each,
             pad_value=pad_value,
             save_image=save_image,
-            **kwargs,
+            sample_args=sample_args,
         )
 
     def forward(
@@ -49,6 +49,8 @@ class LatentImageSampler(_ImageCallback):
         pl_module: LightningModule,
         title: Optional[str] = None,
     ) -> None:
+        if not trainer.is_global_zero:
+            return
         title = title or "images"
 
         dim = (self.num_samples, getattr(pl_module.hparams, "latent_dim"))
@@ -59,16 +61,13 @@ class LatentImageSampler(_ImageCallback):
         grid = self._make_grid(generated_image)
         self.log_image(trainer, pl_module, grid, title=title)
 
-        if not self.add_fixed_samples:
+        if not self.log_fixed_batch:
             return
 
         if self.fixed_train_batch is None:
-            self.fixed_train_batch = (
-                torch.normal(mean=0.0, std=1.0, size=input.shape),
-                0,
-            )
-        fixed_input, _ = self.fixed_train_batch
-        fixed_generated_image = self._sample(pl_module, fixed_input)
+            self.fixed_train_batch = torch.normal(mean=0.0, std=1.0, size=dim)
+
+        fixed_generated_image = self._sample(pl_module, self.fixed_train_batch)
         fixed_grid = self._make_grid(fixed_generated_image)
         self.log_image(trainer, pl_module, fixed_grid, title=title + "_fixed")
 
@@ -118,11 +117,11 @@ class ConditionImageSampler(_ImageCallback):
         normalize: bool = True,
         norm_range: Tuple[int, int] = (-1, 1),
         on_epoch_end: bool = True,
-        add_fixed_samples: bool = False,
+        log_fixed_batch: bool = False,
         scale_each: bool = False,
         pad_value: int = 0,
         save_image: bool = False,
-        **kwargs: Any,
+        sample_args: Optional[Dict[str, Any]] = None,
     ) -> None:
         super().__init__(
             step=step,
@@ -133,11 +132,12 @@ class ConditionImageSampler(_ImageCallback):
             normalize=normalize,
             norm_range=norm_range,
             on_epoch_end=on_epoch_end,
-            add_fixed_samples=add_fixed_samples,
+            log_fixed_batch=log_fixed_batch,
+            sample_fixed_batch=log_fixed_batch,
             scale_each=scale_each,
             pad_value=pad_value,
             save_image=save_image,
-            **kwargs,
+            sample_args=sample_args,
         )
 
     def forward(
@@ -148,6 +148,8 @@ class ConditionImageSampler(_ImageCallback):
         fixed_batch: Optional[Any] = None,
         title: Optional[str] = None,
     ) -> None:
+        if not trainer.is_global_zero:
+            return
         title = title or "images"
         source_images, conditions = batch[:2]
         source_images: Tensor = source_images[: self.num_samples]
@@ -175,26 +177,30 @@ class ConditionImageSampler(_ImageCallback):
     def on_train_epoch_end(
         self, trainer: Trainer, pl_module: LightningModule
     ) -> None:
+        if not trainer.is_global_zero:
+            return
         if trainer.current_epoch % self.epoch != 0:
             return
         self.forward(
             trainer=trainer,
             pl_module=pl_module,
-            batch=self.get_train_batch(trainer),
-            fixed_batch=self.get_fixed_train_batch(trainer),
+            batch=self.train_batch,
+            fixed_batch=self.fixed_train_batch,
             title="epoch",
         )
 
     def on_validation_epoch_end(
         self, trainer: Trainer, pl_module: LightningModule
     ) -> None:
+        if not trainer.is_global_zero:
+            return
         if trainer.sanity_checking or trainer.current_epoch % self.epoch != 0:
             return
         self.forward(
             trainer=trainer,
             pl_module=pl_module,
-            batch=self.get_val_batch(trainer),
-            fixed_batch=self.get_fixed_val_batch(trainer),
+            batch=self.val_batch,
+            fixed_batch=self.fixed_val_batch,
             title="val/epoch",
         )
 
@@ -208,13 +214,15 @@ class ConditionImageSampler(_ImageCallback):
     ) -> None:
         if self.step is None:
             return
+        if not trainer.is_global_zero:
+            return
         if trainer.global_step == 0 or trainer.global_step % self.step != 0:
             return
         self.forward(
             trainer=trainer,
             pl_module=pl_module,
             batch=batch,
-            fixed_batch=self.get_fixed_train_batch(trainer),
+            fixed_batch=self.fixed_train_batch,
             title="batch",
         )
 
@@ -229,13 +237,15 @@ class ConditionImageSampler(_ImageCallback):
     ) -> None:
         if trainer.sanity_checking or self.step is None:
             return
+        if not trainer.is_global_zero:
+            return
         if trainer.global_step == 0 or trainer.global_step % self.step != 0:
             return
         self.forward(
             trainer=trainer,
             pl_module=pl_module,
             batch=batch,
-            fixed_batch=self.get_fixed_val_batch(trainer),
+            fixed_batch=self.fixed_val_batch,
             title="val/batch",
         )
 
@@ -251,7 +261,7 @@ class I2ISampler(_ImageCallback):
         normalize: bool = True,
         norm_range: Tuple[int, int] = (-1, 1),
         on_epoch_end: bool = True,
-        add_fixed_samples: bool = False,
+        log_fixed_batch: bool = False,
         scale_each: bool = False,
         pad_value: int = 0,
         save_image: bool = False,
@@ -266,7 +276,8 @@ class I2ISampler(_ImageCallback):
             normalize=normalize,
             norm_range=norm_range,
             on_epoch_end=on_epoch_end,
-            add_fixed_samples=add_fixed_samples,
+            log_fixed_batch=log_fixed_batch,
+            sample_fixed_batch=log_fixed_batch,
             scale_each=scale_each,
             pad_value=pad_value,
             save_image=save_image,
@@ -281,6 +292,8 @@ class I2ISampler(_ImageCallback):
         fixed_batch: Optional[Any] = None,
         title: Optional[str] = None,
     ) -> None:
+        if not trainer.is_global_zero:
+            return
         title = title or "images"
         source_images, target_images = batch[:2]
         source_images: Tensor = source_images[: self.num_samples]
@@ -309,26 +322,30 @@ class I2ISampler(_ImageCallback):
     def on_train_epoch_end(
         self, trainer: Trainer, pl_module: LightningModule
     ) -> None:
+        if not trainer.is_global_zero:
+            return
         if trainer.current_epoch % self.epoch != 0:
             return
         self.forward(
             trainer=trainer,
             pl_module=pl_module,
-            batch=self.get_train_batch(trainer),
-            fixed_batch=self.get_fixed_train_batch(trainer),
+            batch=self.train_batch,
+            fixed_batch=self.fixed_train_batch,
             title="epoch",
         )
 
     def on_validation_epoch_end(
         self, trainer: Trainer, pl_module: LightningModule
     ) -> None:
+        if not trainer.is_global_zero:
+            return
         if trainer.sanity_checking or trainer.current_epoch % self.epoch != 0:
             return
         self.forward(
             trainer=trainer,
             pl_module=pl_module,
-            batch=self.get_val_batch(trainer),
-            fixed_batch=self.get_fixed_val_batch(trainer),
+            batch=self.val_batch,
+            fixed_batch=self.fixed_val_batch,
             title="val/epoch",
         )
 
@@ -342,13 +359,15 @@ class I2ISampler(_ImageCallback):
     ) -> None:
         if self.step is None:
             return
+        if not trainer.is_global_zero:
+            return
         if trainer.global_step == 0 or trainer.global_step % self.step != 0:
             return
         self.forward(
             trainer=trainer,
             pl_module=pl_module,
             batch=batch,
-            fixed_batch=self.get_fixed_train_batch(trainer),
+            fixed_batch=self.fixed_train_batch,
             title="batch",
         )
 
@@ -363,12 +382,14 @@ class I2ISampler(_ImageCallback):
     ) -> None:
         if trainer.sanity_checking or self.step is None:
             return
+        if not trainer.is_global_zero:
+            return
         if trainer.global_step == 0 or trainer.global_step % self.step != 0:
             return
         self.forward(
             trainer=trainer,
             pl_module=pl_module,
             batch=batch,
-            fixed_batch=self.get_fixed_val_batch(trainer),
+            fixed_batch=self.fixed_val_batch,
             title="val/batch",
         )

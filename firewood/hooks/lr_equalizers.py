@@ -33,6 +33,10 @@ _NEED_RECURSIVE = {
     "SpatialSepConvTranspose2d",
     "SpatialSepConvTranspose3d",
 }
+_EXCLUDE_PATTERN = {
+    r"Norm(\dd)?$",
+    r"Noise$",
+}
 
 
 class _LREqualizer:
@@ -42,8 +46,8 @@ class _LREqualizer:
     @staticmethod
     def is_applicable(module: nn.Module, name: str) -> bool:
         module_name = utils.get_name(module)
-        if module_name not in _NEED_RECURSIVE and re.search(
-            r"Norm(\dd)?$", module_name
+        if module_name not in _NEED_RECURSIVE and any(
+            re.search(pattern, module_name) for pattern in _EXCLUDE_PATTERN
         ):
             return False
         parameter = getattr(module, name, None)
@@ -78,9 +82,7 @@ class _LREqualizer:
     def compute(self, module: nn.Module) -> Tensor:
         parameter: Tensor = getattr(module, self.name + "_param")
         gain: Tensor = getattr(module, f"_{self.name}_gain")
-        if gain != 1.0:
-            parameter = parameter * gain.to(parameter)
-        return parameter
+        return parameter * gain.to(dtype=parameter.dtype)
 
     def __call__(self, module: nn.Module, input: Tensor) -> None:
         self.__check_call_name_with_orig(module=module)
@@ -244,6 +246,7 @@ def lr_equalizer(
     weight_name: str = "weight",
     bias_name: str = "bias",
     lr_multiplier: float = 1.0,
+    weight_gain: float = 1.0,
     weight_init_std: float = 1.0,
     bias_init: float = 0.0,
     keep_value: bool = False,
@@ -257,6 +260,7 @@ def lr_equalizer(
                 weight_name=weight_name,
                 bias_name=bias_name,
                 lr_multiplier=lr_multiplier,
+                weight_gain=weight_gain,
                 weight_init_std=weight_init_std,
                 bias_init=bias_init,
                 keep_value=keep_value,
@@ -273,7 +277,7 @@ def lr_equalizer(
     WeightLREqualizer.apply(
         module=module,
         name=weight_name,
-        lr_multiplier=lr_multiplier,
+        lr_multiplier=lr_multiplier * weight_gain,
         init_std=weight_init_std,
         recursive=True,
         keep_value=keep_value,

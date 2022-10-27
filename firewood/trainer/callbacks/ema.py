@@ -2,21 +2,20 @@ from typing import Any, Dict, Optional, Sequence
 
 import torch
 from pytorch_lightning import Callback, LightningModule, Trainer
-from pytorch_lightning.utilities import rank_zero_only
 from pytorch_lightning.utilities.types import STEP_OUTPUT
 from torch import Tensor
 
 from firewood.common.types import DEVICE, STR
 from firewood.trainer.utils import StateDictManager
-from firewood.utils import clone_to_cpu_tensor
+from firewood.utils import args_to
 
 
 class ExponentialMovingAverage(Callback):
     """
     Maintains Exponential Moving Average of weights by decay factor.
     The EMA weights are updated after each batch and are used for validation.
-    If gpu memory is not enough, set `device` as "cpu". Then, the EMA weights
-    stored in CPU memory.
+    If gpu memory is not enough, set `store_on_cpu` as True. Then, the EMA
+    weights stored in CPU memory.
 
     The shadow parameter is updated as:
         shadow_parameter = decay * shadow_parameter + (1 - decay) * parameter
@@ -26,7 +25,8 @@ class ExponentialMovingAverage(Callback):
         self,
         decay: float = 0.999,
         target_modules: Optional[STR] = None,
-        device: DEVICE = "cuda",
+        exclude_modules: Optional[STR] = None,
+        store_on_cpu: bool = False,
     ):
         super().__init__()
         self.decay = decay
@@ -35,32 +35,40 @@ class ExponentialMovingAverage(Callback):
         elif isinstance(target_modules, Sequence):
             target_modules = tuple(target_modules)
         self.target_modules = target_modules
-        if not torch.cuda.is_available():
-            device = "cpu"
-        self.device = torch.device(device)
+        if isinstance(exclude_modules, str):
+            exclude_modules = (exclude_modules,)
+        elif isinstance(exclude_modules, Sequence):
+            exclude_modules = tuple(exclude_modules)
+        self.exclude_modules = exclude_modules
+        self.store_on_cpu = store_on_cpu
 
-        self.original = StateDictManager(device=self.device)
-        self.shadow: Dict[str, Tensor] = dict()
+        self.shadow = StateDictManager(store_on_cpu=store_on_cpu)
+        self.original = StateDictManager(store_on_cpu=True)
+        self.device: Optional[DEVICE] = None
 
     @torch.no_grad()
     def _parameter_to_shadow(self, name: str, parameter: Tensor) -> None:
-        if self.device.type == "cpu":
-            parameter = parameter.detach().cpu()
-        if name not in self.shadow:
-            self.shadow[name] = parameter.clone()
+        if "inception" in name or "fid" in name or "lpips" in name:
             return
-        self.shadow[name] = (
-            self.decay * self.shadow[name] + (1 - self.decay) * parameter
-        )
+        if self.target_modules and not name.startswith(self.target_modules):
+            return
+        if self.exclude_modules and name.startswith(self.exclude_modules):
+            return
+        if name not in self.shadow:
+            self.shadow[name] = parameter
+            return
+        self.shadow[name] = torch.lerp(parameter, self.shadow[name], self.decay)
 
-    @rank_zero_only
     def on_train_start(
         self, trainer: Trainer, pl_module: LightningModule
     ) -> None:
-        for name, param in pl_module.named_parameters():
-            self._parameter_to_shadow(name, param)
+        if not trainer.is_global_zero:
+            return
+        if self.device is None:
+            self.device = pl_module.device
+        for name, parameter in pl_module.named_parameters():
+            self._parameter_to_shadow(name, parameter)
 
-    @rank_zero_only
     def on_train_batch_end(
         self,
         trainer: Trainer,
@@ -69,33 +77,38 @@ class ExponentialMovingAverage(Callback):
         batch: Any,
         batch_idx: int,
     ) -> None:
-        if self.target_modules is None:
-            for name, parameter in pl_module.named_parameters():
-                self._parameter_to_shadow(name, parameter)
-        else:
-            for name, parameter in pl_module.named_parameters():
-                if name.startswith(self.target_modules):
-                    self._parameter_to_shadow(name, parameter)
+        if not trainer.is_global_zero:
+            return
+        for name, parameter in pl_module.named_parameters():
+            self._parameter_to_shadow(name, parameter)
 
     def on_validation_start(
         self, trainer: Trainer, pl_module: LightningModule
     ) -> None:
-        if not self.shadow:
+        if trainer.sanity_checking:
             return
 
         self.original.update(pl_module.state_dict())
+        self.shadow = trainer.strategy.broadcast(
+            self.shadow.to("cpu"), src=0
+        ).to(pl_module.device)
         pl_module.load_state_dict(self.shadow, strict=False)
+        self.shadow.clear()
 
     def on_validation_end(
         self, trainer: Trainer, pl_module: LightningModule
     ) -> None:
-        if not self.shadow:
+        if trainer.sanity_checking:
             return
 
+        if trainer.is_global_zero:
+            self.shadow.update(pl_module.state_dict())
         pl_module.load_state_dict(self.original, strict=False)
+        self.original.clear()
 
     def state_dict(self) -> Dict[str, Tensor]:
-        return self.shadow
+        return {k: args_to(v, device="cpu") for k, v in self.shadow.items()}
 
     def load_state_dict(self, state_dict: Dict[str, Any]) -> None:
-        self.shadow = state_dict
+        for k, v in state_dict.items():
+            self.shadow.update(k=args_to(v, device=self.device))

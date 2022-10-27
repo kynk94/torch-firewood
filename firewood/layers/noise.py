@@ -30,13 +30,20 @@ def get(name: Optional[str], **kwargs: Any) -> Optional[nn.Module]:
 
 
 class _NoiseBase(nn.Module):
+    noise: Optional[Tensor]
+
     def __init__(
-        self, strength: float = 1.0, channel_same: bool = True
+        self,
+        strength: float = 0.0,
+        channel_same: bool = True,
+        freeze_noise: bool = False,
     ) -> None:
         super().__init__()
         self.init_strength = strength
         self.channel_same = channel_same
-        self.weight = nn.Parameter(torch.Tensor(1))
+        self.freeze_noise = freeze_noise
+        self.weight = nn.Parameter(torch.zeros(1))
+        self.register_buffer("noise", None)
         self.reset_parameters()
 
     def reset_parameters(self) -> None:
@@ -52,9 +59,22 @@ class _NoiseBase(nn.Module):
     def _generate_noise(self, shape: Union[Size, Tuple[int, ...]]) -> Tensor:
         raise NotImplementedError
 
+    def reset_noise(self) -> None:
+        self.noise = None
+
     def forward(self, input: Tensor) -> Tensor:
-        noise = self._generate_noise(self._get_noise_shape(input))
-        weighted_noise = self.weight * noise.to(device=input.device)
+        if self.freeze_noise:
+            if self.noise is None:
+                self.noise = self._generate_noise(
+                    self._get_noise_shape(input[:1])
+                )
+            noise = self.noise.expand(input.size(0), *(-1,) * (input.ndim - 1))
+        else:
+            noise = self._generate_noise(self._get_noise_shape(input))
+        weight_size = (1, -1, *(1,) * (input.ndim - 2))
+        weighted_noise = self.weight.view(weight_size) * noise.to(
+            device=input.device
+        )
         return input + weighted_noise.to(input.dtype)
 
     def extra_repr(self) -> str:
@@ -62,6 +82,7 @@ class _NoiseBase(nn.Module):
             [
                 f"channel_same={self.channel_same}",
                 f"init_strength={self.init_strength}",
+                f"freeze_noise={self.freeze_noise}",
             ]
         )
 
@@ -72,8 +93,13 @@ class GaussianNoise(_NoiseBase):
         stddev: float = 1.0,
         strength: float = 0.0,
         channel_same: bool = True,
+        freeze_noise: bool = False,
     ) -> None:
-        super().__init__(strength=strength, channel_same=channel_same)
+        super().__init__(
+            strength=strength,
+            channel_same=channel_same,
+            freeze_noise=freeze_noise,
+        )
         self.stddev = stddev
 
     def _generate_noise(self, shape: Union[Size, Tuple[int, ...]]) -> Tensor:
@@ -90,8 +116,13 @@ class UniformNoise(_NoiseBase):
         max: float = 1.0,
         strength: float = 0.0,
         channel_same: bool = True,
+        freeze_noise: bool = False,
     ) -> None:
-        super().__init__(strength=strength, channel_same=channel_same)
+        super().__init__(
+            strength=strength,
+            channel_same=channel_same,
+            freeze_noise=freeze_noise,
+        )
         self.min = min
         self.max = max
 

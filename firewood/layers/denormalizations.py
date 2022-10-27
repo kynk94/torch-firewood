@@ -49,6 +49,7 @@ class AdaptiveNorm(DeNorm):
     """
 
     use_extra_inputs = True
+    _unbiased = True
 
     def __init__(
         self,
@@ -64,15 +65,15 @@ class AdaptiveNorm(DeNorm):
         weight_initializer: str = "kaiming_uniform",
         bias_initializer: str = "zeros",
     ) -> None:
-        self.unbiased = unbiased
         normalization_kwargs = normalization_kwargs or dict()
-        normalization_kwargs.update(unbiased=self.unbiased)
+        normalization_kwargs.update(unbiased=unbiased)
         super().__init__(
             num_features=num_features,
             normalization=normalization,
             eps=eps,
             **normalization_kwargs,
         )
+        self.unbiased = unbiased
         self.num_features = num_features
         self.modulation_features = modulation_features or num_features
         self.use_projection = use_projection or use_separate_projection
@@ -98,6 +99,16 @@ class AdaptiveNorm(DeNorm):
         else:
             linear_kwargs["out_features"] = self.num_features * 2
             self.linear = Linear(**linear_kwargs)
+
+    @property
+    def unbiased(self) -> bool:
+        return self._unbiased
+
+    @unbiased.setter
+    def unbiased(self, value: bool) -> None:
+        self._unbiased = value
+        if hasattr(self.normalization, "unbiased"):
+            setattr(self.normalization, "unbiased", value)
 
     def forward(  # type: ignore
         self,

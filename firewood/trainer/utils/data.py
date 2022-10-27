@@ -19,6 +19,7 @@ from typing import (
 )
 
 import numpy as np
+import torch
 import torchvision.datasets as TD
 from natsort import natsort_keygen
 from numpy import ndarray
@@ -33,7 +34,6 @@ from pytorch_lightning.utilities.data import (
     _get_dataloader_init_args_and_kwargs,
     _reinstantiate_wrapped_cls,
 )
-from pytorch_lightning.utilities.fetching import AbstractDataFetcher
 from pytorch_lightning.utilities.types import TRAIN_DATALOADERS
 from torch.utils.data import ConcatDataset, DataLoader, Dataset, Subset
 from torchvision import transforms
@@ -952,7 +952,7 @@ def update_resize_of_vision_dataset(
         for _dataset in dataset.datasets:
             update_resize_of_vision_dataset(_dataset, resolution)
         return dataset
-    elif isinstance(dataset, Subset):
+    if isinstance(dataset, Subset):
         update_resize_of_vision_dataset(dataset.dataset, resolution)
         return dataset
 
@@ -972,6 +972,51 @@ def update_resize_of_vision_dataset(
             t.height, t.width = resolution
             return dataset
     raise ValueError("Dataset does not have Resize transform.")
+
+
+def __get_batch_size_updated_dataloader(
+    trainer: Trainer,
+    dataloader: Any,
+    batch_size: int,
+    shuffle: bool = True,
+    mode: RunningStage = RunningStage.TRAINING,
+) -> DataLoader:
+    sampler = trainer._data_connector._resolve_sampler(
+        dataloader, shuffle=shuffle, mode=mode
+    )
+    if hasattr(sampler, "batch_size"):
+        setattr(sampler, "batch_size", batch_size)
+    dl_args, dl_kwargs = _get_dataloader_init_args_and_kwargs(
+        dataloader, sampler, mode=mode
+    )
+    if len(dl_args) > 2 and isinstance(dl_args[1], int):  # type: ignore
+        dl_args = cast(Tuple[Any], (dl_args[0], batch_size, *dl_args[2:]))
+    else:
+        dl_kwargs.update(batch_size=batch_size)
+    return _reinstantiate_wrapped_cls(dataloader, *dl_args, **dl_kwargs)
+
+
+def __updated_dataloader(
+    trainer: Trainer,
+    dataloader: Any,
+    batch_size: int,
+    shuffle: bool,
+    mode: RunningStage,
+) -> TRAIN_DATALOADERS:
+    if batch_size is None:
+        return dataloader
+    kwargs = dict(batch_size=batch_size, shuffle=shuffle, mode=mode)
+    if isinstance(dataloader, Mapping):
+        return {
+            k: __get_batch_size_updated_dataloader(trainer, v, **kwargs)  # type: ignore
+            for k, v in dataloader.items()
+        }
+    if isinstance(dataloader, Sequence):
+        return [
+            __get_batch_size_updated_dataloader(trainer, v, **kwargs)  # type: ignore
+            for v in dataloader
+        ]
+    return __get_batch_size_updated_dataloader(trainer, dataloader, **kwargs)  # type: ignore
 
 
 def update_dataloader_of_trainer(
@@ -995,46 +1040,11 @@ def update_dataloader_of_trainer(
         targets.append("val")
     if "test" in target:
         targets.append("test")
-    if "predict" in target:
-        raise ValueError("predict dataloader is not supported.")
+    if "predict" in target or not targets:
+        raise ValueError(f"Invalid target: {target}")
 
-    def _get_batch_size_updated_dataloader(
-        dataloader: Any,
-        shuffle: bool = True,
-        mode: RunningStage = RunningStage.TRAINING,
-    ) -> DataLoader:
-        sampler = trainer._data_connector._resolve_sampler(
-            dataloader, shuffle=shuffle, mode=mode
-        )
-        if hasattr(sampler, "batch_size"):
-            setattr(sampler, "batch_size", batch_size)
-        dl_args, dl_kwargs = _get_dataloader_init_args_and_kwargs(
-            dataloader, sampler, mode=mode
-        )
-        if len(dl_args) > 2 and isinstance(dl_args[1], int):  # type: ignore
-            dl_args = cast(Tuple[Any], (dl_args[0], batch_size, *dl_args[2:]))
-        else:
-            dl_kwargs.update(batch_size=batch_size)
-        return _reinstantiate_wrapped_cls(dataloader, *dl_args, **dl_kwargs)
+    torch.cuda.empty_cache()
 
-    def _dataloader(shuffle: bool = False) -> TRAIN_DATALOADERS:
-        if batch_size is None:
-            return dataloader
-        if isinstance(dataloader, Mapping):
-            return {
-                k: _get_batch_size_updated_dataloader(v, shuffle, mode)
-                for k, v in dataloader.items()
-            }
-        if isinstance(dataloader, Sequence):
-            return [
-                _get_batch_size_updated_dataloader(v, shuffle, mode)
-                for v in dataloader
-            ]
-        return _get_batch_size_updated_dataloader(dataloader, shuffle, mode)
-
-    datamodule: Optional[LightningDataModule] = getattr(
-        trainer, "datamodule", None
-    )
     for target in targets:
         source: _DataLoaderSource = getattr(
             trainer._data_connector, f"_{target}_dataloader_source"
@@ -1053,38 +1063,47 @@ def update_dataloader_of_trainer(
             else:
                 update_resize_of_vision_dataset(dataloader.dataset, resolution)
 
+        datamodule: Optional[LightningDataModule] = getattr(
+            trainer, "datamodule", None
+        )
+        kwargs = dict(
+            trainer=trainer,
+            dataloader=dataloader,
+            batch_size=batch_size,
+            shuffle=target == "train",
+            mode=mode,
+        )
         if datamodule is None:
             setattr(
                 trainer._data_connector,
                 f"_{target}_dataloader_source",
-                _DataLoaderSource(
-                    _dataloader(target == "train"),
-                    source.name,
-                ),
+                _DataLoaderSource(__updated_dataloader(**kwargs), source.name),  # type: ignore
             )
         else:
             setattr(
                 datamodule,
                 f"{target}_dataloader",
-                functools.partial(_dataloader, target == "train"),
+                functools.partial(__updated_dataloader, **kwargs),
             )
 
         getattr(trainer, f"reset_{target}_dataloader")()
         if target == "train":
             data_fetcher = trainer.fit_loop._data_fetcher
-            dataloader_name = "train_dataloader"
+            _dataloader = trainer.train_dataloader
         elif target == "val":
-            data_fetcher = trainer.validate_loop._data_fetcher
-            dataloader_name = "val_dataloaders"
+            data_fetcher = trainer.fit_loop.epoch_loop.val_loop._data_fetcher
+            _dataloader = trainer.val_dataloaders
         elif target == "test":
             data_fetcher = trainer.test_loop._data_fetcher
-            dataloader_name = "test_dataloaders"
+            _dataloader = trainer.test_dataloaders
         else:
             raise ValueError("Invalid target.")
         if data_fetcher is None:
             continue
+        if isinstance(_dataloader, list) and len(_dataloader) == 1:
+            _dataloader = _dataloader[0]
         data_fetcher.setup(
-            cast(DataLoader, getattr(trainer, dataloader_name)),
+            cast(DataLoader, _dataloader),
             batch_to_device=getattr(data_fetcher, "batch_to_device", None),
         )
         data_fetcher.dataloader_iter = iter(data_fetcher.dataloader)
