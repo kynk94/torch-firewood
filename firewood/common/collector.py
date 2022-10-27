@@ -35,8 +35,7 @@ def __layer_new_wrapper(cls) -> Callable[..., object]:
     func = cls.__new__
 
     def wrapper(*args, **kwargs) -> object:
-        self = args[0]
-        obj = func(self)
+        obj = func(args[0])
         Collector.add_layer(obj)
         return obj
 
