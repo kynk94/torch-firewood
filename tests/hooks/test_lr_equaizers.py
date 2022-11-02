@@ -59,8 +59,8 @@ def test_with_nn():
     conv_2 = model[1].layers["weighting"]
 
     nn_model = nn.Sequential(
-        NNBlock(conv_1.weight_param, conv_1._weight_gain),
-        NNBlock(conv_2.weight_param, conv_2._weight_gain),
+        NNBlock(conv_1.weight_param, conv_1._weight_coeff),
+        NNBlock(conv_2.weight_param, conv_2._weight_coeff),
     )
 
     optimizer = torch.optim.Adam(model.parameters(), lr=lr)

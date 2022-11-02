@@ -8,13 +8,10 @@ Differences from the official implementation:
     official:
       * Uses weight size of noise as 'inputs channels'.
         By the way, official StyleGAN2 uses weight size of noise as '1'.
-      * Uses gain as 'sqrt(2)' for all layers except ToRGB and last layers.
       * Uses instance normalization without bessel's correction.
     this:
       * Uses weight size of noise as '1' for convenience, following to the
         implementation of official StyleGAN2.
-      * Uses gain as '1' for all layers, following to the implementation of
-        official StyleGAN2.
       * Uses instance normalization with bessel's correction, following to the
         implementation of official AdaIN.
 
@@ -34,6 +31,9 @@ from torch import Tensor
 
 from firewood import hooks, layers, utils
 from firewood.common.types import NUMBER
+
+DEFAULT_GAIN = math.sqrt(2)
+LAST_NODE_GAIN = 1.0
 
 
 class MappingNetwork(nn.Module):
@@ -57,8 +57,6 @@ class MappingNetwork(nn.Module):
         normalize_latents: bool = True,
         bias: bool = True,
         activation: str = "lrelu",
-        lr_equalization: bool = True,
-        lr_multiplier: float = 0.01,
     ) -> None:
         super().__init__()
         self.latent_dim = latent_dim
@@ -94,9 +92,6 @@ class MappingNetwork(nn.Module):
             self.layers.append(
                 layers.LinearBlock(in_features, out_features, **layer_kwargs)
             )
-
-        if lr_equalization:
-            hooks.lr_equalizer(self, lr_multiplier=lr_multiplier)
 
     def forward(self, input: Tensor, label: Optional[Tensor] = None) -> Tensor:
         if self.label_affine is not None:
@@ -243,8 +238,6 @@ class SynthesisNetwork(nn.Module):
         fir: NUMBER = [1, 2, 1],
         resolution: int = 1024,
         image_channels: int = 3,
-        lr_equalization: bool = True,
-        lr_multiplier: float = 1.0,
     ) -> None:
         super().__init__()
         self.style_dim = style_dim
@@ -302,9 +295,6 @@ class SynthesisNetwork(nn.Module):
             self.to_images[str(resolution)] = layers.GFixConv2d(
                 out_channels, self.image_channels, 1, 1, 0, bias=True
             )
-
-        if lr_equalization:
-            hooks.lr_equalizer(self, lr_multiplier=lr_multiplier)
 
     def forward(
         self,
@@ -412,8 +402,6 @@ class Generator(nn.Module):
             label_dim=label_dim,
             style_dim=style_dim,
             activation=activation,
-            lr_equalization=lr_equalization,
-            lr_multiplier=mapping_lr_multiplier,
         )
         self.synthesis = SynthesisNetwork(
             style_dim=style_dim,
@@ -423,9 +411,31 @@ class Generator(nn.Module):
             fir=fir,
             resolution=resolution,
             image_channels=image_channels,
-            lr_equalization=lr_equalization,
-            lr_multiplier=synthesis_lr_multiplier,
         )
+        if lr_equalization:
+            hooks.lr_equalizer(
+                module=self.mapping,
+                lr_multiplier=mapping_lr_multiplier,
+                weight_gain=DEFAULT_GAIN,
+            )
+            hooks.lr_equalizer(
+                module=self.synthesis,
+                lr_multiplier=synthesis_lr_multiplier,
+                weight_gain=DEFAULT_GAIN,
+            )
+            for submodule in self.synthesis.layers.modules():
+                if isinstance(submodule, layers.AdaptiveNorm):
+                    hooks.lr_equalizer(
+                        module=submodule,
+                        lr_multiplier=synthesis_lr_multiplier,
+                        weight_gain=LAST_NODE_GAIN,
+                    )
+            for submodule in self.synthesis.to_images.modules():
+                hooks.lr_equalizer(
+                    module=submodule,
+                    lr_multiplier=synthesis_lr_multiplier,
+                    weight_gain=LAST_NODE_GAIN,
+                )
 
         self.truncation_cutoff = truncation_cutoff
         self.style_avg_beta = style_avg_beta
@@ -631,7 +641,16 @@ class Discriminator(nn.Module):
                 )
 
         if lr_equalization:
-            hooks.lr_equalizer(self, lr_multiplier=lr_multiplier)
+            hooks.lr_equalizer(
+                module=self,
+                lr_multiplier=lr_multiplier,
+                weight_gain=DEFAULT_GAIN,
+            )
+            hooks.lr_equalizer(
+                module=self.layers["last"][-1],
+                lr_multiplier=lr_multiplier,
+                weight_gain=LAST_NODE_GAIN,
+            )
 
     def forward(
         self,

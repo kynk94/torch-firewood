@@ -79,7 +79,7 @@ ACTIVATIONS: Dict[str, ACTIVATION] = {
     "leaky_relu": {
         "func": _leaky_relu,
         "default_alpha": 0.2,
-        "default_gain": None,
+        "default_gain": None,  # official implementation uses sqrt(2)
         "cuda_operation_index": 3,
         "gradient_reference": "y",
         "has_second_grad": False,
