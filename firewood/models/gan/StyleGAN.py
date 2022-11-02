@@ -8,10 +8,12 @@ Differences from the official implementation:
     official:
       * Uses weight size of noise as 'inputs channels'.
         By the way, official StyleGAN2 uses weight size of noise as '1'.
+      * Weight gain is multiplied to the weight itself.
       * Uses instance normalization without bessel's correction.
     this:
       * Uses weight size of noise as '1' for convenience, following to the
         implementation of official StyleGAN2.
+      * Weight gain is multiplied after activation like official StyleGAN2.
       * Uses instance normalization with bessel's correction, following to the
         implementation of official AdaIN.
 
@@ -31,9 +33,6 @@ from torch import Tensor
 
 from firewood import hooks, layers, utils
 from firewood.common.types import NUMBER
-
-DEFAULT_GAIN = math.sqrt(2)
-LAST_NODE_GAIN = 1.0
 
 
 class MappingNetwork(nn.Module):
@@ -414,28 +413,11 @@ class Generator(nn.Module):
         )
         if lr_equalization:
             hooks.lr_equalizer(
-                module=self.mapping,
-                lr_multiplier=mapping_lr_multiplier,
-                weight_gain=DEFAULT_GAIN,
+                module=self.mapping, lr_multiplier=mapping_lr_multiplier
             )
             hooks.lr_equalizer(
-                module=self.synthesis,
-                lr_multiplier=synthesis_lr_multiplier,
-                weight_gain=DEFAULT_GAIN,
+                module=self.synthesis, lr_multiplier=synthesis_lr_multiplier
             )
-            for submodule in self.synthesis.layers.modules():
-                if isinstance(submodule, layers.AdaptiveNorm):
-                    hooks.lr_equalizer(
-                        module=submodule,
-                        lr_multiplier=synthesis_lr_multiplier,
-                        weight_gain=LAST_NODE_GAIN,
-                    )
-            for submodule in self.synthesis.to_images.modules():
-                hooks.lr_equalizer(
-                    module=submodule,
-                    lr_multiplier=synthesis_lr_multiplier,
-                    weight_gain=LAST_NODE_GAIN,
-                )
 
         self.truncation_cutoff = truncation_cutoff
         self.style_avg_beta = style_avg_beta
@@ -641,16 +623,7 @@ class Discriminator(nn.Module):
                 )
 
         if lr_equalization:
-            hooks.lr_equalizer(
-                module=self,
-                lr_multiplier=lr_multiplier,
-                weight_gain=DEFAULT_GAIN,
-            )
-            hooks.lr_equalizer(
-                module=self.layers["last"][-1],
-                lr_multiplier=lr_multiplier,
-                weight_gain=LAST_NODE_GAIN,
-            )
+            hooks.lr_equalizer(module=self, lr_multiplier=lr_multiplier)
 
     def forward(
         self,

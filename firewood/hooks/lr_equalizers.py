@@ -226,17 +226,19 @@ class WeightLREqualizer(_LREqualizer):
         if original_coeff is not None:
             original_weight = original_weight * original_coeff
 
+        fan_in = original_weight.detach()[0].numel()
         if lr_multiplier is None:
             lr_multiplier = 1.0
         if not isinstance(lr_multiplier, Tensor):
             lr_multiplier = torch.tensor(lr_multiplier, dtype=torch.float32)
+        if original_coeff is not None:
+            original_coeff *= math.sqrt(fan_in) / lr_multiplier
         if gain is None:
             gain = original_coeff or 1.0
         if init_std is None:
             init_std = cast(float, getattr(module, init_name, 1.0))
-
-        fan_in = original_weight.detach()[0].numel()
         coeff = gain * lr_multiplier / math.sqrt(fan_in)
+
         if keep_value:
             weight = Parameter(original_weight / coeff.to(original_weight))
         else:
