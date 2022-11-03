@@ -305,7 +305,7 @@ def upfirdnNd(
     if any(u > 1 for u in up) and all(u >= 1 for u in up):
         input = upsample(input, up, mode=upsample_mode)
     if upsample_mode.startswith("zero"):
-        gain = gain * math.prod(up)
+        gain = gain * cast(float, np.prod(up))
 
     # pad
     if any(p != 0 for p in padding):
@@ -335,14 +335,13 @@ def load_cuda_upfirdn2d(
 
     cuda_extension = CUDAExtension.get(name)
 
-    gain *= math.prod(up)
+    gain *= cast(float, np.prod(up))
 
     class UpFirDn2dCUDA(torch.autograd.Function):
         @staticmethod
         # type: ignore[override]
         def forward(ctx: Any, input: Tensor, kernel: Tensor) -> Tensor:
             output = input
-            kernel = kernel.to(input.dtype)
             ctx.save_for_backward(kernel)
             ctx.input_shape = input.shape
 

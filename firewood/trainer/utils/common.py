@@ -1,7 +1,7 @@
 import os
 from typing import Callable, Optional, Union
 
-from pytorch_lightning.utilities.rank_zero import _get_rank
+from lightning_lite.utilities.rank_zero import _get_rank
 from torch import Tensor
 
 from firewood.utils.common import get_last_file, maximum_multiple_of_divisor

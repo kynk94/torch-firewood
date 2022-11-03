@@ -65,7 +65,7 @@ class ExponentialMovingAverage(Callback):
         if not trainer.is_global_zero:
             return
         if self.device is None:
-            self.device = pl_module.device
+            self.device = pl_module.device  # type: ignore
         for name, parameter in pl_module.named_parameters():
             self._parameter_to_shadow(name, parameter)
 
@@ -91,7 +91,9 @@ class ExponentialMovingAverage(Callback):
         self.original.update(pl_module.state_dict())
         self.shadow = trainer.strategy.broadcast(
             self.shadow.to("cpu"), src=0
-        ).to(pl_module.device)
+        ).to(
+            pl_module.device
+        )  # type: ignore
         pl_module.load_state_dict(self.shadow, strict=False)
         self.shadow.clear()
 

@@ -1,6 +1,7 @@
 import math
 from typing import Any, Tuple, Union
 
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.init as init
@@ -50,7 +51,7 @@ class _SepConvNd(nn.Module):
         # bias initialization
         # add other init methods here if needed
         if self.bias_initializer == "uniform":  # default torch init
-            fan_in = self.in_channels * math.prod(self.kernel_size)
+            fan_in = self.in_channels * np.prod(self.kernel_size)
             bound = 1 / math.sqrt(fan_in)
             init.uniform_(self.bias, -bound, bound)
         else:
@@ -410,7 +411,7 @@ class _SpatialSepConvNd(_SepConvNd):
             convolution = GFixConv3d  # type: ignore
         else:
             raise ValueError(f"Invalid kernel_size: {kernel_size}")
-        n_parameters = in_channels * out_channels * math.prod(kernel_size)
+        n_parameters = in_channels * out_channels * np.prod(kernel_size)
         smaller = min(in_channels, out_channels)
         n_sep_parameters = smaller**2 * sum(kernel_size[:-1])
         n_sep_parameters += in_channels * out_channels * kernel_size[-1]
@@ -559,7 +560,7 @@ class _SpatialSepConvTransposeNd(_SepConvNd):
             convolution = GFixConvTranspose3d  # type: ignore
         else:
             raise ValueError(f"Invalid kernel_size: {kernel_size}")
-        n_parameters = in_channels * out_channels * math.prod(kernel_size)
+        n_parameters = in_channels * out_channels * np.prod(kernel_size)
         smaller = min(in_channels, out_channels)
         n_sep_parameters = smaller**2 * sum(kernel_size[:-1])
         n_sep_parameters += in_channels * out_channels * kernel_size[-1]

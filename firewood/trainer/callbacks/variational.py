@@ -120,7 +120,7 @@ class LatentDimInterpolator(_ImageCallback):
         pl_module.eval()
         for z_x in np.linspace(*self.latent_range, num=self.nrow):
             for z_y in np.linspace(*self.latent_range, num=self.nrow):
-                z = torch.zeros(1, latent_dim, device=pl_module.device)
+                z = torch.zeros(1, latent_dim, device=pl_module.device)  # type: ignore
                 div, mod = divmod(ndim_to_interpolate, 2)
                 z[:, : div + mod] = torch.tensor(z_x)
                 z[:, -div:] = torch.tensor(z_y)
@@ -270,11 +270,11 @@ class ConditionInterpolator(_ImageCallback):
         for z_x in np.linspace(*self.conditions_range, num=self.nrow):
             for z_y in np.linspace(*self.conditions_range, num=self.nrow):
                 if self.conditions_base is None:
-                    z = torch.zeros(
+                    z = torch.zeros(  # type: ignore
                         size=(1, condition_dim), device=pl_module.device
                     )
                 else:
-                    z = self.conditions_base.clone().to(
+                    z = self.conditions_base.clone().to(  # type: ignore
                         device=pl_module.device, non_blocking=True
                     )
                 div, mod = divmod(len(self.target_dims), 2)

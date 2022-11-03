@@ -1,6 +1,6 @@
-import math
-from typing import Optional, Tuple, Union, cast, overload
+from typing import Optional, Union, overload
 
+import numpy as np
 import torch.nn as nn
 from torch import Size, Tensor
 
@@ -74,7 +74,7 @@ class _ReshapeNd(Reshape):
             return super().forward(input=input)
 
         # only works with square or cube Tensor
-        input_dim = math.prod(input.shape[1:])
+        input_dim = np.prod(input.shape[1:])
         spatial_dim = round((input_dim / self.channels) ** (1 / self.rank))
         return input.view(
             input.size(0), self.channels, *(spatial_dim,) * self.rank

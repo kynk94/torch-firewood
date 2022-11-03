@@ -3,8 +3,9 @@ from datetime import timedelta
 from typing import Any, Optional
 
 import pytorch_lightning as pl
+from lightning_lite.utilities.types import _PATH
 from pytorch_lightning.callbacks import ModelCheckpoint as _ModelCheckpoint
-from pytorch_lightning.utilities.types import _PATH, STEP_OUTPUT
+from pytorch_lightning.utilities.types import STEP_OUTPUT
 
 _MINUTE_LOG_NAME = "epoch/elapsed_minute"
 

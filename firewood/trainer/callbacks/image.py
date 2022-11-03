@@ -88,11 +88,11 @@ class _ImageCallback(Callback):
         **kwargs: Any,
     ) -> Tensor:
         if self.device is None:
-            self.device = pl_module.device
+            self.device = pl_module.device  # type: ignore
         kwargs.update(self.sample_args)
         pl_module.eval()
         generated_images: Tensor = pl_module(
-            input.to(device=pl_module.device, non_blocking=True),
+            input.to(device=pl_module.device, non_blocking=True),  # type: ignore
             *args_to(*args, dtype=input.dtype, device=self.device),
             **kwargs_to(**kwargs, dtype=input.dtype, device=self.device),
         )

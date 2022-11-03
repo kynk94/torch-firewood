@@ -107,7 +107,9 @@ class MappingNetwork(nn.Module):
             output = layer(output)
         if self.training and self.style_avg_beta is not None:
             with torch.no_grad():
-                self.style_avg.lerp_(output.mean(0), 1 - self.style_avg_beta)
+                self.style_avg.lerp_(
+                    output.float().mean(0), 1 - self.style_avg_beta
+                )
         return output
 
 
@@ -467,7 +469,7 @@ class Generator(nn.Module):
             truncation = utils.clamp(truncation, 0.0, 1.0)
             style = torch.where(
                 layer_index < self.truncation_cutoff,
-                torch.lerp(self.mapping.style_avg, style, truncation),
+                torch.lerp(self.mapping.style_avg, style.float(), truncation),
                 style,
             )
         image = self.synthesis(style, alpha, resolution)
