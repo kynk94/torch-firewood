@@ -772,11 +772,13 @@ def _load_operation(
             bias: Optional[Tensor] = None,
         ) -> Tensor:
             ctx.save_for_backward(
-                input if weight.requires_grad else NULL_TENSOR,
-                weight if input.requires_grad else NULL_TENSOR,
+                input if weight.requires_grad else NULL_TENSOR.to(input),
+                weight if input.requires_grad else NULL_TENSOR.to(weight),
             )
             ctx.input_shape = input.shape
-            output = conv_operation(input, weight, bias, **conv_kwargs)
+            output = conv_operation(
+                input, weight.to(input), bias, **conv_kwargs
+            )
             return output
 
         @staticmethod
@@ -826,7 +828,6 @@ def _load_operation(
                         output_padding=output_padding,
                         dilation=dilation,
                     )
-                # Explicit cast because autocast doesn't work properly.
                 grad_input = _load_operation(
                     transposed=not transposed,
                     output_padding=_output_padding,
@@ -836,7 +837,7 @@ def _load_operation(
                     dilation=dilation,
                     groups=groups,
                     device=device,
-                )(grad_output, weight.to(grad_output.dtype), None)
+                )(grad_output, weight.to(grad_output), None)
                 if grad_input.shape != input_shape:
                     raise ValueError(
                         "grad_input shape mismatch in backward of GFixConvNd "
@@ -846,7 +847,7 @@ def _load_operation(
             if ctx.needs_input_grad[1] and not weight_gradients_disabled():
                 # Explicit cast because autocast doesn't work properly.
                 grad_weight = GFixConvNdGradWeight.apply(
-                    grad_output, input.to(grad_output.dtype)
+                    grad_output, input.to(grad_output)
                 )
                 if grad_weight.shape != weight_shape:
                     raise ValueError(
@@ -864,8 +865,10 @@ def _load_operation(
         # type: ignore[override]
         def forward(ctx: Any, grad_output: Tensor, input: Tensor) -> Tensor:
             ctx.save_for_backward(
-                grad_output if input.requires_grad else NULL_TENSOR,
-                input if grad_output.requires_grad else NULL_TENSOR,
+                grad_output
+                if input.requires_grad
+                else NULL_TENSOR.to(grad_output),
+                input if grad_output.requires_grad else NULL_TENSOR.to(input),
             )
             ctx.grad_output_shape = grad_output.shape
             ctx.input_shape = input.shape
@@ -924,7 +927,7 @@ def _load_operation(
                     dilation=dilation,
                     groups=groups,
                     device=device,
-                )(grad_output, second_grad_weight.to(grad_output.dtype), None)
+                )(grad_output, second_grad_weight, None)
                 if second_grad_input.shape != input_shape:
                     raise ValueError(
                         "second_grad_input shape mismatch in backward of GFixConvNdGradWeight"

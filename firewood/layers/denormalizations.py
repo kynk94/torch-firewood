@@ -1,6 +1,6 @@
-import math
 from typing import Any, Optional, Tuple, Union
 
+import numpy as np
 import torch
 import torch.nn as nn
 from torch import Tensor
@@ -85,7 +85,7 @@ class AdaptiveNorm(DeNorm):
 
         if self.modulation_features_shape is None:
             self.modulation_features_shape = (self.modulation_features,)
-        in_features = math.prod(self.modulation_features_shape)
+        in_features = np.prod(self.modulation_features_shape)
         linear_kwargs: Any = dict(
             in_features=in_features,
             bias=True,

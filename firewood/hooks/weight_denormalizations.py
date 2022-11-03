@@ -9,6 +9,10 @@ from torch.nn import Parameter
 
 from firewood import utils
 from firewood.layers.linear import Linear
+from firewood.layers.normalizations import (
+    maximum_normalization,
+    moment_normalization,
+)
 
 
 class WeightDeNormOutput:
@@ -197,29 +201,16 @@ def _normalize_pre_normalize_arg(
 def _pre_normalize_stylegan2(
     weight: Tensor, gamma: Tensor
 ) -> Tuple[Tensor, Tensor]:
-    # maximum norm
-    norm: Tensor = LA.vector_norm(
-        weight,
-        ord=float("inf"),
-        dim=tuple(range(1, weight.ndim)),
-        keepdim=True,
-    )
-    weight = weight / math.sqrt(weight[0].numel()) / norm
-    gamma = gamma / LA.vector_norm(gamma, ord=float("inf"), dim=1, keepdim=True)
+    weight = maximum_normalization(weight, dim=tuple(range(1, weight.ndim)))
+    gamma = maximum_normalization(gamma, dim=1, use_scaling=False)
     return weight, gamma
 
 
 def _pre_normalize_stylegan3(
     weight: Tensor, gamma: Tensor
 ) -> Tuple[Tensor, Tensor]:
-    # root mean squared
-    weight = (
-        weight
-        * weight.square()
-        .mean(dim=tuple(range(1, weight.ndim)), keepdim=True)
-        .rsqrt()
-    )
-    gamma = gamma * gamma.square().mean().rsqrt()
+    weight = moment_normalization(weight, dim=tuple(range(1, weight.ndim)))
+    gamma = moment_normalization(gamma, dim=None)
     return weight, gamma
 
 

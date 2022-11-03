@@ -1,6 +1,6 @@
 import argparse
-import math
 
+import numpy as np
 import torch
 import torch.nn as nn
 from torch import Tensor
@@ -25,7 +25,7 @@ class Generator(nn.Module):
     ) -> None:
         super().__init__()
         image_shape = (channels, *utils._pair(resolution))
-        out_dim = math.prod(image_shape)
+        out_dim = np.prod(image_shape)
 
         self.layers = nn.ModuleList(
             [
@@ -59,7 +59,7 @@ class Discriminator(nn.Module):
     ) -> None:
         super().__init__()
         image_shape = (channels, *utils._pair(resolution))
-        in_dim = math.prod(image_shape)
+        in_dim = np.prod(image_shape)
 
         self.layers = nn.ModuleList(
             [

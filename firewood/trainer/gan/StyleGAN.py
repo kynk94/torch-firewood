@@ -257,8 +257,8 @@ class StyleGAN(pl.LightningModule):
             dataset_size=getattr(self.hparams, "dataset_size", 60000),
             initial_resolution=self.hparams.initial_resolution,
             max_resolution=self.hparams.resolution,
-            fade_epoch=getattr(self.hparams, "fade_epoch", 15.0),
-            level_epoch=getattr(self.hparams, "level_epoch", 15.0),
+            fade_epoch=getattr(self.hparams, "fade_epoch", 10.0),
+            level_epoch=getattr(self.hparams, "level_epoch", 10.0),
             ramp_up_epoch=getattr(self.hparams, "ramp_up_epoch", 0.0),
             lr_dict=None,
         )
@@ -311,7 +311,7 @@ class StyleGAN(pl.LightningModule):
         d_scheduler, g_scheduler = self.lr_schedulers()
         d_scheduler.update(total_batch_size)
         g_scheduler.update(total_batch_size)
-        if g_scheduler.resolution != self.current_resolution:
+        if self.current_resolution != g_scheduler.resolution:
             next_batch_size = self.calculate_batch_size(g_scheduler.resolution)
             update_dataloader_of_trainer(
                 self.trainer,
@@ -319,7 +319,7 @@ class StyleGAN(pl.LightningModule):
                 batch_size=next_batch_size,
                 resolution=g_scheduler.resolution,
             )
-        self.current_resolution = g_scheduler.resolution
+            self.current_resolution = g_scheduler.resolution
 
     def get_alpha_resolution(self) -> Tuple[float, int]:
         d_scheduler, g_scheduler = self.lr_schedulers()
@@ -379,7 +379,7 @@ def main():
             dataset_class=NoClassImageFolder,
             transform=transform,
             loader_mode="RGB",
-            split="train/val",
+            split=(60000, 10000),
         )
     else:
         datasets = torchvision_train_val_test_datasets(
@@ -388,7 +388,7 @@ def main():
     datamodule = DataModule(
         datasets=datasets,
         batch_size=args["batch_size"],
-        num_workers=8,
+        num_workers=4,
         pin_memory=False,
     )
 
@@ -402,7 +402,7 @@ def main():
         fir=[1, 2, 1],
         mbstd_group=4,
         resolution=args["resolution"],
-        initial_resolution=4,
+        initial_resolution=8,
         image_channels=3,
         dataset_size=len(datasets[0]),
         initial_batch_size=args["batch_size"],

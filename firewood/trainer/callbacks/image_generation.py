@@ -54,7 +54,7 @@ class LatentImageSampler(_ImageCallback):
         title = title or "images"
 
         dim = (self.num_samples, getattr(pl_module.hparams, "latent_dim"))
-        input = torch.normal(
+        input = torch.normal(  # type: ignore
             mean=0.0, std=1.0, size=dim, device=pl_module.device
         )
         generated_image = self._sample(pl_module, input)

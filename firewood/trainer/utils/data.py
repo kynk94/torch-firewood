@@ -39,8 +39,12 @@ from torch.utils.data import ConcatDataset, DataLoader, Dataset, Subset
 from torchvision import transforms
 from torchvision.datasets import ImageFolder, VisionDataset
 
-from firewood.common.types import INT
-from firewood.utils.common import normalize_int_tuple
+from firewood.common.types import FLOAT, INT
+from firewood.utils.common import (
+    is_float_sequence,
+    is_int_sequence,
+    normalize_int_tuple,
+)
 
 try:
     import albumentations as A
@@ -53,9 +57,7 @@ Image.init()
 DATASET = Union[Dataset, Tuple[Dataset, ...], List[Dataset]]
 DATALOADER = Union[DataLoader, Tuple[DataLoader, ...], List[DataLoader]]
 SPLIT = Union[
-    Literal["auto", "train/test/val", "train/test", "train/val"],
-    Tuple[float, ...],
-    List[float],
+    Literal["auto", "train/test/val", "train/test", "train/val"], INT, FLOAT
 ]
 IMG_EXTENSIONS = (
     ".jpg",
@@ -621,7 +623,17 @@ def concat_and_split_datasets(
             datasets = ConcatDataset(datasets)
 
     # Split concatenated dataset to train, val, test datasets
-    if isinstance(split, str):
+    if isinstance(split, (int, float)):
+        split = (split,)
+    if is_int_sequence(split):
+        split = tuple(s / len(datasets) for s in split)  # type: ignore
+        if len(split) < 3 and sum(split) < 1.0:
+            split = split + (1.0 - sum(split),)
+    elif is_float_sequence(split):
+        split = cast(Tuple[float, ...], split)
+        if len(split) < 3 and sum(split) < 1.0:
+            split = tuple(split) + (1.0 - sum(split),)
+    elif isinstance(split, str):
         split = split.strip().lower()  # type: ignore
         if split == "auto" or ("val" in split and "test" in split):
             split = (0.8, 0.1, 0.1)
@@ -640,7 +652,6 @@ def concat_and_split_datasets(
             "each of which is between 0 and 1, "
             "and the sum of all numbers must be 1"
         )
-
     indices: List[Optional[Sequence[int]]] = []
     start = 0
     for i in range(3):

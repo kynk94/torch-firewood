@@ -23,40 +23,6 @@ from torch import Tensor
 from firewood.common.types import FLOAT, INT, NUMBER, STR
 
 
-@overload
-def clamp(input: float, _min: float, _max: float) -> float:
-    ...
-
-
-@overload
-def clamp(input: Sequence[float], _min: float, _max: float) -> Sequence[float]:
-    ...
-
-
-@overload
-def clamp(
-    input: ndarray, _min: Union[float, ndarray], _max: Union[float, ndarray]
-) -> ndarray:
-    ...
-
-
-@overload
-def clamp(
-    input: Tensor, _min: Union[float, Tensor], _max: Union[float, Tensor]
-) -> Tensor:
-    ...
-
-
-def clamp(input: NUMBER, _min: Any, _max: Any) -> NUMBER:
-    if isinstance(input, float):
-        return max(_min, min(input, _max))
-    if isinstance(input, Sequence):
-        return type(input)(clamp(i, _min, _max) for i in input)  # type: ignore
-    if isinstance(input, ndarray):
-        return input.clip(_min, _max)
-    return input.clamp(_min, _max)
-
-
 def is_newer_torch(version: Union[str, int, float]) -> bool:
     if isinstance(version, (int, float)):
         version = str(version)
@@ -187,6 +153,18 @@ def keep_setattr(
     if not hasattr(obj, keep_attr) or overwrite:
         setattr(obj, keep_attr, getattr(obj, attr))
     setattr(obj, attr, value)
+
+
+def is_int_sequence(input: Any) -> bool:
+    if isinstance(input, Sequence) and input:
+        return all(isinstance(i, int) for i in input)
+    return False
+
+
+def is_float_sequence(input: Any) -> bool:
+    if isinstance(input, Sequence) and input:
+        return all(isinstance(i, float) for i in input)
+    return False
 
 
 def normalize_int_tuple(value: Union[INT, Tensor], n: int) -> Tuple[int, ...]:
@@ -321,6 +299,40 @@ def get_last_file(
     if isinstance(key, str):
         raise ValueError(f"Invalid key: {key}")
     return max(files, key=key)
+
+
+@overload
+def clamp(input: float, _min: float, _max: float) -> float:
+    ...
+
+
+@overload
+def clamp(input: Sequence[float], _min: float, _max: float) -> Sequence[float]:
+    ...
+
+
+@overload
+def clamp(
+    input: ndarray, _min: Union[float, ndarray], _max: Union[float, ndarray]
+) -> ndarray:
+    ...
+
+
+@overload
+def clamp(
+    input: Tensor, _min: Union[float, Tensor], _max: Union[float, Tensor]
+) -> Tensor:
+    ...
+
+
+def clamp(input: NUMBER, _min: Any, _max: Any) -> NUMBER:
+    if isinstance(input, float):
+        return max(_min, min(input, _max))
+    if isinstance(input, Sequence):
+        return type(input)(clamp(i, _min, _max) for i in input)  # type: ignore
+    if isinstance(input, ndarray):
+        return input.clip(_min, _max)
+    return input.clamp(_min, _max)
 
 
 def highest_power_of_2(n: int) -> int:
