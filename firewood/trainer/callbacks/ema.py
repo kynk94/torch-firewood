@@ -89,11 +89,8 @@ class ExponentialMovingAverage(Callback):
             return
 
         self.original.update(pl_module.state_dict())
-        self.shadow = trainer.strategy.broadcast(
-            self.shadow.to("cpu"), src=0
-        ).to(
-            pl_module.device
-        )  # type: ignore
+        shadow = trainer.strategy.broadcast(self.shadow.to("cpu"), src=0)
+        self.shadow = shadow.to(pl_module.device)  # type: ignore
         pl_module.load_state_dict(self.shadow, strict=False)
         self.shadow.clear()
 
