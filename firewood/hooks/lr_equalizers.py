@@ -106,9 +106,9 @@ class BiasLREqualizer(_LREqualizer):
     ) -> Optional["BiasLREqualizer"]:
         def __recursive_apply() -> BiasLREqualizer:
             fn: Optional[BiasLREqualizer] = None
-            for _module in module.modules():
+            for submodule in module.modules():
                 _fn = BiasLREqualizer.apply(
-                    module=_module,
+                    module=submodule,
                     name=name,
                     lr_multiplier=lr_multiplier,
                     init=init,
@@ -182,9 +182,9 @@ class WeightLREqualizer(_LREqualizer):
     ) -> Optional["WeightLREqualizer"]:
         def __recursive_apply() -> WeightLREqualizer:
             fn: Optional[WeightLREqualizer] = None
-            for _module in module.modules():
+            for submodule in module.modules():
                 _fn = WeightLREqualizer.apply(
-                    module=_module,
+                    module=submodule,
                     name=name,
                     lr_multiplier=lr_multiplier,
                     gain=gain,
@@ -400,11 +400,9 @@ def pop_bias_attrs(
     except RuntimeError:
         name = "bias"
         use_hook = False
-    try:
-        bias: Parameter = utils.popattr(module, name)
-        module.register_parameter(name, None)
-    except AttributeError:
-        raise
+
+    bias: Parameter = utils.popattr(module, name)
+    module.register_parameter(name, None)
     return {
         "bias": bias,
         "coeff": bias_coeff,
