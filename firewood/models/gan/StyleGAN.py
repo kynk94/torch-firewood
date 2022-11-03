@@ -8,7 +8,7 @@ Differences from the official implementation:
     official:
       * Uses weight size of noise as 'inputs channels'.
         By the way, official StyleGAN2 uses weight size of noise as '1'.
-      * Weight gain is multiplied to the weight itself.
+      * Weight gain is multiplied to the weight at runtime.
       * Uses instance normalization without bessel's correction.
     this:
       * Uses weight size of noise as '1' for convenience, following to the
@@ -46,6 +46,8 @@ class MappingNetwork(nn.Module):
     style_dim (style w)
     """
 
+    style_avg: Tensor
+
     def __init__(
         self,
         latent_dim: int = 512,
@@ -56,12 +58,15 @@ class MappingNetwork(nn.Module):
         normalize_latents: bool = True,
         bias: bool = True,
         activation: str = "lrelu",
+        style_avg_beta: float = 0.995,
     ) -> None:
         super().__init__()
         self.latent_dim = latent_dim
         self.label_dim = label_dim
         self.hidden_dim = hidden_dim
         self.style_dim = style_dim
+        self.style_avg_beta = style_avg_beta
+        self.register_buffer("style_avg", torch.zeros(style_dim))
 
         # conditional generation
         if self.label_dim == 0:
@@ -100,6 +105,9 @@ class MappingNetwork(nn.Module):
         output = input
         for layer in self.layers:
             output = layer(output)
+        if self.training and self.style_avg_beta is not None:
+            with torch.no_grad():
+                self.style_avg.lerp_(output.mean(0), 1 - self.style_avg_beta)
         return output
 
 
@@ -375,8 +383,6 @@ class SynthesisNetwork(nn.Module):
 
 # ------------------------------------------------------------------------------
 class Generator(nn.Module):
-    style_avg: Tensor
-
     def __init__(
         self,
         latent_dim: int = 512,
@@ -389,7 +395,6 @@ class Generator(nn.Module):
         resolution: int = 1024,
         image_channels: int = 3,
         truncation_cutoff: int = 8,
-        style_avg_beta: Optional[float] = 0.995,
         style_mixing_probability: Optional[float] = 0.9,
         lr_equalization: bool = True,
         mapping_lr_multiplier: float = 0.01,
@@ -420,11 +425,9 @@ class Generator(nn.Module):
             )
 
         self.truncation_cutoff = truncation_cutoff
-        self.style_avg_beta = style_avg_beta
         self.style_mixing_probability = utils.clamp(
             style_mixing_probability, 0.0, 1.0
         )
-        self.register_buffer("style_avg", torch.zeros(style_dim))
 
     def forward(
         self,
@@ -439,16 +442,6 @@ class Generator(nn.Module):
 
         style: Tensor = self.mapping(input, label)
         style = style.unsqueeze(1).expand(-1, self.synthesis.n_layers * 2, -1)
-
-        if self.training and self.style_avg_beta is not None:
-            with torch.no_grad():
-                self.style_avg.copy_(
-                    torch.lerp(
-                        style[:, 0].mean(0),
-                        self.style_avg,
-                        self.style_avg_beta,
-                    )
-                )
 
         layer_index = torch.arange(
             self.synthesis.n_layers * 2, device=input.device
@@ -474,7 +467,7 @@ class Generator(nn.Module):
             truncation = utils.clamp(truncation, 0.0, 1.0)
             style = torch.where(
                 layer_index < self.truncation_cutoff,
-                torch.lerp(self.style_avg, style, truncation),
+                torch.lerp(self.mapping.style_avg, style, truncation),
                 style,
             )
         image = self.synthesis(style, alpha, resolution)
