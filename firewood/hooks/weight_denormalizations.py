@@ -1,18 +1,30 @@
-import math
+"""
+Weight Denormalization introduced in StyleGAN2.
+
+`weight_denorm(conv)` makes the following changes to the `conv` module.
+before:
+    output = weight * input + bias
+after:
+    module.use_extra_inputs = True  # The extra input is modulation_features.
+    modulated_weight = weight * affine(modulation_features)
+    demodulation_coeff = 1 / LA.vector_norm(modulated_weight)
+    output = modulated_weight * input * demodulation_coeff + bias
+"""
 from typing import Literal, Optional, Tuple, Union
 
 import torch
+import torch.linalg as LA
 import torch.nn as nn
 from torch import Tensor
-from torch import linalg as LA
 from torch.nn import Parameter
 
 from firewood import utils
-from firewood.layers.linear import Linear
-from firewood.layers.normalizations import (
+from firewood.functional.normalizations import (
     maximum_normalization,
     moment_normalization,
 )
+from firewood.layers.block import Block
+from firewood.layers.linear import Linear
 
 
 class WeightDeNormOutput:
@@ -29,6 +41,7 @@ class WeightDeNormOutput:
         module.register_forward_hook(fn)  # type: ignore
         bias: Optional[Union[Tensor, Parameter]] = getattr(module, name, None)
         if isinstance(bias, Parameter):
+            # Remove bias to avoid adding bias immediately after weighting.
             delattr(module, name)
             fn.param_name += "_orig"
             module.register_parameter(fn.param_name, bias)
@@ -143,8 +156,9 @@ class WeightDeNorm:
         self, module: nn.Module, weight: Tensor, gamma: Tensor
     ) -> None:
         if self.demodulate:
+            modulated_weight = _weight_modulation(weight, gamma)
             demodulation_coeff = _calc_demodulation_coeff(
-                _weight_modulation(weight, gamma), fused=False, eps=self.eps
+                modulated_weight, fused=False, eps=self.eps
             )
             # coeff should be multiplied to the output of the module
             setattr(self.output_hook, "demodulation_coeff", demodulation_coeff)
@@ -175,7 +189,9 @@ class WeightDeNorm:
             self.__weight_denorm_not_fused(module, weight, gamma)
             input = input * utils.unsqueeze_view(gamma, -1, input.ndim - 2)
 
-        bias = getattr(module, self.output_hook.param_name, None)
+        bias: Optional[Parameter] = getattr(
+            module, self.output_hook.param_name, None
+        )
         if bias is not None:
             # delete module's bias, and assign bias to the output_hook.
             setattr(module, self.output_hook.name, None)
@@ -232,18 +248,18 @@ def _calc_demodulation_coeff(
 ) -> Tensor:
     """
     modulated_weight:
-        weight sized (batch_size, out_features, in_features, *spatial)
+        weight sized (batch_size, out_features, in_features, *kernel_size)
     """
     batch_size = modulated_weight.size(0)
     rank = modulated_weight.ndim - 3
-    return_shape = (batch_size, -1, 1) + (1,) * (rank - int(not fused))
-    return (
-        modulated_weight.square()
-        .sum(dim=tuple(range(2, modulated_weight.ndim)))
-        .add(eps)
-        .rsqrt()
-        .view(return_shape)
+    return_shape = (batch_size, -1) + (1,) * (rank + int(fused))
+    coeff: Tensor = 1 / (
+        LA.vector_norm(
+            modulated_weight, ord=2, dim=tuple(range(2, modulated_weight.ndim))
+        )
+        + eps
     )
+    return coeff.view(return_shape)
 
 
 def weight_denorm(
@@ -254,6 +270,15 @@ def weight_denorm(
     pre_normalize: str = "stylegan2",
     eps: float = 1e-9,
 ) -> nn.Module:
+    if isinstance(module, Block):
+        return weight_denorm(
+            module.layers["weighting"],
+            modulation_features,
+            name,
+            demodulate,
+            pre_normalize,
+            eps,
+        )
     WeightDeNorm.apply(
         module=module,
         modulation_features=modulation_features,

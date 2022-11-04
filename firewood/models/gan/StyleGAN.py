@@ -172,7 +172,7 @@ class InitialBlock(nn.Module):
         input: style vector (w)
         """
         if input.ndim == 2:
-            input = input.unsqueeze(1).expand(-1, 2, -1)
+            input = input.unsqueeze(1).repeat(1, 2, 1)
         output = self.input.expand(input.size(0), -1, -1, -1)
         if self.noise is not None:
             output = self.noise(output)
@@ -241,7 +241,6 @@ class SynthesisNetwork(nn.Module):
         style_dim: int = 512,
         max_channels: int = 512,
         channels_decay: float = 1.0,
-        initial_input_type: str = "constant",
         activation: str = "lrelu",
         noise: Optional[str] = "normal",
         fir: NUMBER = [1, 2, 1],
@@ -252,7 +251,6 @@ class SynthesisNetwork(nn.Module):
         self.style_dim = style_dim
         self.max_channels = max_channels
         self.channels_decay = channels_decay
-        self.initial_input_type = initial_input_type
         self.resolution = self._check_resolution(resolution)
         self.image_channels = image_channels
         self.n_layers = (
@@ -272,7 +270,7 @@ class SynthesisNetwork(nn.Module):
         for i in range(self.n_layers):
             resolution = 2 ** (i + 2)
             if i == 0:
-                in_channels = _get_channels(
+                in_channels = _calc_channels(
                     resolution=self.initial_resolution,
                     max=self.max_channels,
                     decay=self.channels_decay,
@@ -287,7 +285,7 @@ class SynthesisNetwork(nn.Module):
                 )
             else:
                 in_channels = out_channels
-                out_channels = _get_channels(
+                out_channels = _calc_channels(
                     resolution=resolution,
                     max=self.max_channels,
                     decay=self.channels_decay,
@@ -333,13 +331,13 @@ class SynthesisNetwork(nn.Module):
                 output = layer(output, style)
             if name != str(resolution):
                 continue
-            image = self.to_images[str(resolution)](output)
+            image: Tensor = self.to_images[str(resolution)](output)
             if resolution > self.initial_resolution and 0.0 <= alpha < 1.0:
                 lower_image = self.to_images[str(resolution // 2)](prev_output)
                 upsampled_lower_image = F.interpolate(
                     lower_image, scale_factor=2, mode="nearest"
                 )
-                image = torch.lerp(upsampled_lower_image, image, alpha)
+                image = torch.lerp(upsampled_lower_image, image.float(), alpha)
             output = image
             break
         return output
@@ -348,7 +346,7 @@ class SynthesisNetwork(nn.Module):
     def inference_all(self, input: Tensor) -> Tuple[Tensor, ...]:
         self.eval()
         if input.ndim == 2:
-            input = input.unsqueeze(1).expand(-1, self.n_layers * 2, -1)
+            input = input.unsqueeze(1).repeat(1, self.n_layers * 2, 1)
         images = []
         for index, (name, layer) in enumerate(self.layers.items()):
             style = input[:, index * 2 : index * 2 + 2]
@@ -443,7 +441,7 @@ class Generator(nn.Module):
             resolution = self.synthesis.resolution
 
         style: Tensor = self.mapping(input, label)
-        style = style.unsqueeze(1).expand(-1, self.synthesis.n_layers * 2, -1)
+        style = style.unsqueeze(1).repeat(1, self.synthesis.n_layers * 2, 1)
 
         layer_index = torch.arange(
             self.synthesis.n_layers * 2, device=input.device
@@ -455,8 +453,8 @@ class Generator(nn.Module):
         ):
             mixing_input = torch.randn_like(input)
             mixing_style: Tensor = self.mapping(mixing_input, label)
-            mixing_style = mixing_style.unsqueeze(1).expand(
-                -1, self.synthesis.n_layers * 2, -1
+            mixing_style = mixing_style.unsqueeze(1).repeat(
+                1, self.synthesis.n_layers * 2, 1
             )
             current_index = 2 + 2 * math.log2(
                 resolution / self.synthesis.initial_resolution
@@ -484,7 +482,7 @@ class Generator(nn.Module):
     ) -> Tuple[Tensor, ...]:
         self.eval()
         style: Tensor = self.mapping(input, label)
-        style = style.unsqueeze(1).expand(-1, self.synthesis.n_layers * 2, -1)
+        style = style.unsqueeze(1).repeat(1, self.synthesis.n_layers * 2, 1)
         if truncation is not None and self.truncation_cutoff is not None:
             truncation = utils.clamp(truncation, 0.0, 1.0)
             layer_index = torch.arange(
@@ -492,7 +490,7 @@ class Generator(nn.Module):
             ).view(1, -1, 1)
             style = torch.where(
                 layer_index < self.truncation_cutoff,
-                torch.lerp(self.style_avg, style, truncation),
+                torch.lerp(self.style_avg, style.float(), truncation),
                 style,
             )
         images = self.synthesis.inference_all(style)
@@ -572,12 +570,12 @@ class Discriminator(nn.Module):
         for i in range(self.n_layers - 1, -1, -1):
             resolution = 2 ** (i + 2)
             if i == self.n_layers - 1:
-                in_channels = _get_channels(
+                in_channels = _calc_channels(
                     resolution, self.max_channels, self.channels_decay
                 )
             else:
                 in_channels = out_channels
-            out_channels = _get_channels(
+            out_channels = _calc_channels(
                 resolution // 2, self.max_channels, self.channels_decay
             )
 
@@ -605,7 +603,7 @@ class Discriminator(nn.Module):
                     self.layers[str(resolution)] = block
 
                 in_features = out_channels * resolution**2
-                out_features = _get_channels(
+                out_features = _calc_channels(
                     resolution // 4, self.max_channels, self.channels_decay
                 )
                 self.layers["last"] = nn.Sequential(
@@ -645,7 +643,7 @@ class Discriminator(nn.Module):
                 lower_output = self.from_images[str(resolution // 2)](
                     utils.image.nearest_downsample(input, 2)
                 )
-                output = torch.lerp(lower_output, output, alpha)
+                output = torch.lerp(lower_output, output.float(), alpha)
         output = self.layers["last"](output)
         if label is not None:
             output = (output * label).sum(dim=1, keepdim=True)
@@ -655,7 +653,7 @@ class Discriminator(nn.Module):
 # ------------------------------------------------------------------------------
 
 
-def _get_channels(resolution: int, max: int = 512, decay: float = 1.0) -> int:
+def _calc_channels(resolution: int, max: int = 512, decay: float = 1.0) -> int:
     return min(
         max,
         int(2 ** (14 - math.log2(resolution) * decay)),

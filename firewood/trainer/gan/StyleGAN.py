@@ -294,10 +294,6 @@ class StyleGAN(pl.LightningModule):
         Because the memory usage of pytorch is slightly higher than tensorflow.
         If want to train 4 batch size with 1024 resolution, removing `FID`.
         (PyTorchLightning does not allow storing FID parameters on CPU memory.)
-        And since `cuda_extension` use more memory than default operation,
-        calling function below will help reduce memory usage.
-        `firewood.utils.apply.set_all_biased_activation_force_default(True)`
-        in the end of `__init__` method to not use `cuda_extension`.
         """
         if resolution == 1024:
             return 2
