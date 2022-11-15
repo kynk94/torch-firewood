@@ -41,6 +41,7 @@ class LSGAN(pl.LightningModule):
         learning_rate: float = 2e-4,
     ):
         super().__init__()
+        self.automatic_optimization = False
         self.save_hyperparameters()
         self.generator = Generator(
             latent_dim=latent_dim,
@@ -92,20 +93,22 @@ class LSGAN(pl.LightningModule):
             "score/fake": score_fake.mean(),
         }
 
-    def training_step(
-        self, batch: Tensor, batch_idx: int, optimizer_idx: int
-    ) -> Tensor:
+    def training_step(self, batch: Tensor, batch_idx: int) -> None:
         real_images, _ = batch
-        if optimizer_idx == 0:
-            log_dict = self.discriminator_step(real_images)
-            key = "loss/dis"
-        else:
-            log_dict = self.generator_step(real_images)
-            key = "loss/gen"
-        loss = log_dict.pop(key)
-        self.log(key, loss, prog_bar=True, on_step=True, on_epoch=True)
-        self.log_dict(log_dict, on_step=True, on_epoch=True)
-        return loss
+        optimizers = self.optimizers()
+        for optimizer_idx in range(len(optimizers)):
+            if optimizer_idx == 0:
+                log_dict = self.discriminator_step(real_images)
+                key = "loss/dis"
+            else:
+                log_dict = self.generator_step(real_images)
+                key = "loss/gen"
+            optimizers[optimizer_idx].zero_grad()
+            loss = log_dict.pop(key)
+            self.manual_backward(loss)
+            optimizers[optimizer_idx].step()
+            self.log(key, loss, prog_bar=True)
+            self.log_dict(log_dict)
 
     def validation_step(
         self, batch: Tensor, batch_idx: int
@@ -139,7 +142,7 @@ class LSGAN(pl.LightningModule):
             for key, value in outputs_cache.items()
         }
         log_dict["val/fid"] = self.fid.compute()
-        self.log_dict(log_dict)
+        self.log_dict(log_dict, sync_dist=True)
 
     def configure_optimizers(self) -> Tuple[Any]:
         lr = self.hparams.learning_rate
@@ -203,7 +206,6 @@ def main():
         datasets=datasets,
         batch_size=args["batch_size"],
         shuffle=True,
-        # when pin_memory=True, data will be pinned to the rank 0 gpu
         pin_memory=False,
     )
 

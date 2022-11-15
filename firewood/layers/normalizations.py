@@ -106,7 +106,7 @@ class GroupNorm(nn.GroupNorm):
     def __init__(
         self,
         num_channels: int,
-        num_groups: int = None,
+        num_groups: Optional[int] = None,
         eps: float = 1e-9,
         affine: bool = True,
     ) -> None:

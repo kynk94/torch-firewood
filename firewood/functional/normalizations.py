@@ -1,5 +1,5 @@
 import math
-from typing import Optional, cast
+from typing import Optional, Union, cast
 
 import numpy as np
 import torch.linalg as LA
@@ -10,7 +10,7 @@ from firewood.common.types import INT
 
 def moment_normalization(
     input: Tensor,
-    ord: int = 2,
+    ord: Union[float, int] = 2,
     dim: Optional[INT] = None,
     use_scaling: bool = True,
     eps: float = 1e-9,

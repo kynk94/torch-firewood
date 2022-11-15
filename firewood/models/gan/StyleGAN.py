@@ -8,12 +8,12 @@ Differences from the official implementation:
     official:
       * Uses weight size of noise as 'inputs channels'.
         By the way, official StyleGAN2 uses weight size of noise as '1'.
-      * Weight gain is multiplied to the weight at runtime.
+      * Activation gain is multiplied to the weight at runtime.
       * Uses instance normalization without bessel's correction.
     this:
       * Uses weight size of noise as '1' for convenience, following to the
         implementation of official StyleGAN2.
-      * Weight gain is multiplied after activation like official StyleGAN2.
+      * Activation gain is multiplied after activation like official StyleGAN2.
       * Uses instance normalization with bessel's correction, following to the
         implementation of official AdaIN.
 
@@ -173,7 +173,7 @@ class InitialBlock(nn.Module):
         """
         if input.ndim == 2:
             input = input.unsqueeze(1).repeat(1, 2, 1)
-        output = self.input.expand(input.size(0), -1, -1, -1)
+        output = self.input.repeat(input.size(0), 1, 1, 1)
         if self.noise is not None:
             output = self.noise(output)
         if self.bias is not None:
@@ -227,7 +227,7 @@ class UpConvConvBlock(nn.Module):
 
     def forward(self, input: Tensor, style: Tensor) -> Tensor:
         if style.ndim == 2:
-            style = style.unsqueeze(1).expand(-1, 2, -1)
+            style = style.unsqueeze(1).repeat(1, 2, 1)
         output = self.conv_adain_1(input, style[:, 0])
         output = self.conv_adain_2(output, style[:, 1])
         return output
@@ -320,7 +320,7 @@ class SynthesisNetwork(nn.Module):
             resolution = self.resolution
 
         if input.ndim == 2:
-            input = input.unsqueeze(1).expand(-1, self.n_layers * 2, -1)
+            input = input.unsqueeze(1).repeat(1, self.n_layers * 2, 1)
 
         for index, (name, layer) in enumerate(self.layers.items()):
             style = input[:, index * 2 : index * 2 + 2]
@@ -337,7 +337,7 @@ class SynthesisNetwork(nn.Module):
                 upsampled_lower_image = F.interpolate(
                     lower_image, scale_factor=2, mode="nearest"
                 )
-                image = torch.lerp(upsampled_lower_image, image.float(), alpha)
+                image = torch.lerp(upsampled_lower_image, image, alpha)
             output = image
             break
         return output
@@ -467,7 +467,7 @@ class Generator(nn.Module):
             truncation = utils.clamp(truncation, 0.0, 1.0)
             style = torch.where(
                 layer_index < self.truncation_cutoff,
-                torch.lerp(self.mapping.style_avg, style.float(), truncation),
+                self.mapping.style_avg.lerp(style.float(), truncation),
                 style,
             )
         image = self.synthesis(style, alpha, resolution)
@@ -490,7 +490,7 @@ class Generator(nn.Module):
             ).view(1, -1, 1)
             style = torch.where(
                 layer_index < self.truncation_cutoff,
-                torch.lerp(self.style_avg, style.float(), truncation),
+                self.mapping.style_avg.lerp(style.float(), truncation),
                 style,
             )
         images = self.synthesis.inference_all(style)
@@ -643,7 +643,7 @@ class Discriminator(nn.Module):
                 lower_output = self.from_images[str(resolution // 2)](
                     utils.image.nearest_downsample(input, 2)
                 )
-                output = torch.lerp(lower_output, output.float(), alpha)
+                output = torch.lerp(lower_output, output, alpha)
         output = self.layers["last"](output)
         if label is not None:
             output = (output * label).sum(dim=1, keepdim=True)

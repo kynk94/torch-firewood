@@ -159,7 +159,7 @@ class _UpFirDnNd(nn.Module):
 
 def _setup_kernel(
     rank: int,
-    kernel: NUMBER = None,
+    kernel: Optional[NUMBER] = None,
     gain: float = 1.0,
     normalize_kernel: bool = True,
     flip_kernel: bool = False,

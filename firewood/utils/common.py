@@ -326,7 +326,7 @@ def clamp(
 
 
 def clamp(input: NUMBER, _min: Any, _max: Any) -> NUMBER:
-    if isinstance(input, float):
+    if isinstance(input, (float, int)):
         return max(_min, min(input, _max))
     if isinstance(input, Sequence):
         return type(input)(clamp(i, _min, _max) for i in input)  # type: ignore
@@ -359,7 +359,7 @@ def squared_number(n: Union[int, float]) -> int:
     if n < 1:
         raise ValueError("`n` must be a positive integer.")
     if isinstance(n, float):
-        if not cast(float, n).is_integer():
+        if not n.is_integer():
             return 0
         n = int(n)
 

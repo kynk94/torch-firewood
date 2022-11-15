@@ -279,6 +279,9 @@ def weight_denorm(
             pre_normalize,
             eps,
         )
+    for hook in module._forward_pre_hooks.values():
+        if isinstance(hook, WeightDeNorm):
+            return module
     WeightDeNorm.apply(
         module=module,
         modulation_features=modulation_features,
