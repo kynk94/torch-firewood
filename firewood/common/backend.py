@@ -5,6 +5,7 @@ from typing import Optional
 import numpy as np
 import torch
 
+torch.backends.cudnn.benchmark = True
 _lr_equalization = False
 _weight_gradients_disabled = False
 _runtime_build = False

@@ -97,8 +97,8 @@ class Pix2Pix(pl.LightningModule):
             log_dict = self.generator_step(source_images, target_images)
             key = "loss/gen"
         loss = log_dict.pop(key)
-        self.log(key, loss, prog_bar=True, on_step=True, on_epoch=True)
-        self.log_dict(log_dict, on_step=True, on_epoch=True)
+        self.log(key, loss, prog_bar=True)
+        self.log_dict(log_dict)
         return loss
 
     def validation_step(
@@ -106,8 +106,8 @@ class Pix2Pix(pl.LightningModule):
     ) -> Dict[str, Tensor]:
         source_images, target_images = batch
         generated_image = self.generator(source_images)
-        score_fake = self.discriminator(source_images, generated_image)
-        score_real = self.discriminator(source_images, target_images)
+        score_fake: Tensor = self.discriminator(source_images, generated_image)
+        score_real: Tensor = self.discriminator(source_images, target_images)
 
         loss_fake = gan_loss(score_fake, False)
         loss_real = gan_loss(score_real, True)
@@ -131,7 +131,7 @@ class Pix2Pix(pl.LightningModule):
             for key, value in outputs_cache.items()
         }
         log_dict["val/fid"] = self.fid.compute()
-        self.log_dict(log_dict)
+        self.log_dict(log_dict, sync_dist=True)
 
     def configure_optimizers(self) -> Tuple[Any]:
         lr = self.hparams.learning_rate
@@ -204,7 +204,6 @@ def main():
         datasets=datasets,
         batch_size=args["batch_size"],
         shuffle=True,
-        # when pin_memory=True, data will be pinned to the rank 0 gpu
         pin_memory=False,
     )
 

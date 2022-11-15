@@ -8,10 +8,13 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
+from firewood.common.backend import set_conv_weight_gradients_disabled
 from firewood.layers import conv_gradfix
 from tests.helpers.runif import runif
 from tests.helpers.utils import gen_params
 from tests.stylegan3.torch_utils.ops import conv2d_gradfix
+
+set_conv_weight_gradients_disabled(False)
 
 
 def test_conv_output_shape():

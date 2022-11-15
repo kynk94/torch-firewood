@@ -1,5 +1,4 @@
 import functools
-import warnings
 from typing import Any, Callable, Union
 
 import torch.nn.init as init

@@ -32,3 +32,4 @@ venv
 *.gz
 *.pt
 *.pkl
+*.yaml

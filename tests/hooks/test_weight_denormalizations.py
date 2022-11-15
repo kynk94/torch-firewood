@@ -52,7 +52,7 @@ def test_with_stylegan2(dtype: torch.dtype) -> None:
     )
 
     assert torch.allclose(
-        output_custom, output_official
+        output_custom, output_official, rtol=1e-4, atol=1e-7
     ), f"Forward result mismatch. l1: {F.l1_loss(output_custom, output_official)}"
 
 
@@ -76,5 +76,5 @@ def test_with_stylegan3() -> None:
     output_official = networks_stylegan3.modulated_conv2d(x, weight, styles)
 
     assert torch.allclose(
-        output_custom, output_official
+        output_custom, output_official, rtol=1e-4, atol=1e-7
     ), f"Forward result mismatch. l1: {F.l1_loss(output_custom, output_official)}"

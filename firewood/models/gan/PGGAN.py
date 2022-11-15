@@ -9,7 +9,7 @@ from torch import Tensor
 
 from firewood import layers
 from firewood.common.types import INT
-from firewood.layers.upfirdn import nearest_downsample, upsample
+from firewood.functional.resample import nearest_downsample, upsample
 
 
 class ToImage(layers.Conv2dBlock):

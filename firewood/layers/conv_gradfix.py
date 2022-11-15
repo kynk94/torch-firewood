@@ -1,4 +1,5 @@
 import contextlib
+import functools
 import itertools
 import math
 import sys
@@ -37,6 +38,12 @@ from firewood.utils import _pair_padding, _single_padding, _triple_padding
 # will be None only in the no_weight_gradients_in_gfix_conv context.
 #
 # The context is used by some regularization algorithms like path-length reg.
+
+# If need gradients of weight, use `set_conv_weight_gradients_disabled(False)`
+# If calculate gradients of weight when it is True, torch will raise an error.
+# RuntimeError: One of the differentiated Tensors appears to not have been used
+# in the graph.
+set_conv_weight_gradients_disabled(True)
 
 
 @contextlib.contextmanager
@@ -77,6 +84,8 @@ class _GFixConvNd(nn.Module):
         (int, int): up & bottom, left & right
         (int, int, int, int): up, bottom, left, right
     """
+
+    force_default = False
 
     def __init__(
         self,
@@ -215,6 +224,23 @@ class _GFixConvNd(nn.Module):
             padding = (0,) * self.rank
         else:
             padding = self.padding
+        if self.force_default:
+            if self.transposed:
+                return functools.partial(
+                    getattr(F, f"conv_transpose{self.rank}d"),
+                    stride=self.stride,
+                    padding=padding,
+                    output_padding=self.output_padding,
+                    groups=self.groups,
+                    dilation=self.dilation,
+                )
+            return functools.partial(
+                getattr(F, f"conv{self.rank}d"),
+                stride=self.stride,
+                padding=padding,
+                dilation=self.dilation,
+                groups=self.groups,
+            )
         return _load_operation(
             transposed=self.transposed,
             weight_shape=self.weight.shape,
@@ -235,8 +261,7 @@ class _GFixConvNd(nn.Module):
                 mode=self.padding_mode,
                 value=self.padding_value,
             )
-        bias = self.bias.to(input.dtype) if self.bias is not None else None
-        output = self.operation(input, self.weight.to(input.dtype), bias)
+        output = self.operation(input, self.weight, self.bias)
         if self.conv_transpose_pad:
             # cropping
             output = F.pad(
@@ -771,14 +796,9 @@ def _load_operation(
             weight: Tensor,
             bias: Optional[Tensor] = None,
         ) -> Tensor:
-            ctx.save_for_backward(
-                input if weight.requires_grad else NULL_TENSOR.to(input),
-                weight if input.requires_grad else NULL_TENSOR.to(weight),
-            )
-            ctx.input_shape = input.shape
-            output = conv_operation(
-                input, weight.to(input), bias, **conv_kwargs
-            )
+            weight = weight.to(dtype=input.dtype)
+            output = conv_operation(input, weight, bias, **conv_kwargs)
+            ctx.save_for_backward(input, weight)
             return output
 
         @staticmethod
@@ -807,7 +827,6 @@ def _load_operation(
             ctx: Any, grad_output: Tensor
         ) -> Tuple[Optional[Tensor], ...]:
             input, weight = ctx.saved_tensors
-            input_shape = ctx.input_shape
             grad_input = None
             grad_weight = None
             grad_bias = None
@@ -821,7 +840,7 @@ def _load_operation(
                 else:
                     _output_padding = _calc_output_padding(
                         input_shape=grad_output.shape,
-                        output_shape=input_shape,
+                        output_shape=input.shape,
                         kernel_size=kernel_size,
                         stride=stride,
                         padding=padding,
@@ -837,18 +856,15 @@ def _load_operation(
                     dilation=dilation,
                     groups=groups,
                     device=device,
-                )(grad_output, weight.to(grad_output), None)
-                if grad_input.shape != input_shape:
+                )(grad_output, weight, None)
+                if grad_input.shape != input.shape:
                     raise ValueError(
                         "grad_input shape mismatch in backward of GFixConvNd "
-                        f"(input: {input_shape}, grad_input: {grad_input.shape})"
+                        f"(input: {input.shape}, grad_input: {grad_input.shape})"
                     )
 
             if ctx.needs_input_grad[1] and not weight_gradients_disabled():
-                # Explicit cast because autocast doesn't work properly.
-                grad_weight = GFixConvNdGradWeight.apply(
-                    grad_output, input.to(grad_output)
-                )
+                grad_weight = GFixConvNdGradWeight.apply(grad_output, input)
                 if grad_weight.shape != weight_shape:
                     raise ValueError(
                         "grad_weight shape mismatch in backward of GFixConvNd "
@@ -864,14 +880,6 @@ def _load_operation(
         @staticmethod
         # type: ignore[override]
         def forward(ctx: Any, grad_output: Tensor, input: Tensor) -> Tensor:
-            ctx.save_for_backward(
-                grad_output
-                if input.requires_grad
-                else NULL_TENSOR.to(grad_output),
-                input if grad_output.requires_grad else NULL_TENSOR.to(input),
-            )
-            ctx.grad_output_shape = grad_output.shape
-            ctx.input_shape = input.shape
             grad_weight = weight_operation(
                 input,
                 weight_shape,
@@ -886,6 +894,7 @@ def _load_operation(
                     "weight shape mismatch in forward of GFixConvNdGradWeight"
                     f"(weight: {weight_shape}, grad_weight: {grad_weight.shape})"
                 )
+            ctx.save_for_backward(grad_output, input)
             return grad_weight
 
         @staticmethod
@@ -894,8 +903,6 @@ def _load_operation(
             ctx: Any, second_grad_weight: Tensor
         ) -> Tuple[Optional[Tensor], ...]:
             grad_output, input = ctx.saved_tensors
-            grad_output_shape = ctx.grad_output_shape
-            input_shape = ctx.input_shape
             second_grad_output = None
             second_grad_input = None
 
@@ -903,15 +910,15 @@ def _load_operation(
                 second_grad_output = GFixConvNd.apply(
                     input, second_grad_weight, None
                 )
-                assert second_grad_output.shape == grad_output_shape
+                assert second_grad_output.shape == grad_output.shape
 
             if ctx.needs_input_grad[1]:
                 if transposed:
                     _output_padding = (0,) * rank
                 else:
                     _output_padding = _calc_output_padding(
-                        input_shape=grad_output_shape,
-                        output_shape=input_shape,
+                        input_shape=grad_output.shape,
+                        output_shape=input.shape,
                         kernel_size=kernel_size,
                         stride=stride,
                         padding=padding,
@@ -928,10 +935,10 @@ def _load_operation(
                     groups=groups,
                     device=device,
                 )(grad_output, second_grad_weight, None)
-                if second_grad_input.shape != input_shape:
+                if second_grad_input.shape != input.shape:
                     raise ValueError(
                         "second_grad_input shape mismatch in backward of GFixConvNdGradWeight"
-                        f"(input: {input_shape}, second_grad_input: {second_grad_input.shape})"
+                        f"(input: {input.shape}, second_grad_input: {second_grad_input.shape})"
                     )
             return second_grad_output, second_grad_input
 

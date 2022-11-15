@@ -21,7 +21,7 @@ jobs:
 
       - name: Install dependencies
         run: |
-          pip install isort black mypy types-pkg-resources torch==1.12.1 pytorch-lightning torchmetrics[image] -f https://download.pytorch.org/whl/cpu/torch_stable.html
+          pip install isort black mypy types-pkg-resources torch torchvision pytorch-lightning torchmetrics[image] --extra-index-url https://download.pytorch.org/whl/cpu
       - name: Run isort
         run: isort . --check-only
 

@@ -79,7 +79,7 @@ class LinearBlock(Block):
         op_order: str = "WNA",
         normalization: Optional[str] = None,
         normalization_args: Optional[Dict[str, Any]] = dict(),
-        activation: str = None,
+        activation: Optional[str] = None,
         activation_args: Optional[Dict[str, Any]] = dict(),
         lr_equalization: Optional[bool] = None,
         lr_equalization_args: Optional[Dict[str, Any]] = None,
