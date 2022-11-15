@@ -1,7 +1,9 @@
 import os
+from collections import defaultdict
 from typing import Callable, Optional, Union
 
 from lightning_lite.utilities.rank_zero import _get_rank
+from pytorch_lightning import Trainer
 from torch import Tensor
 
 from firewood.utils.common import get_last_file, maximum_multiple_of_divisor
@@ -32,3 +34,8 @@ def get_maximum_multiple_batch(input: Tensor, divisor: int) -> Tensor:
     if B < divisor or B % divisor == 0:
         return input
     return input[: maximum_multiple_of_divisor(B, divisor)]
+
+
+def reset_optimizers(trainer: Trainer) -> None:
+    for optimizer in trainer.optimizers:
+        optimizer.state = defaultdict(dict)
