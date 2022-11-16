@@ -39,12 +39,6 @@ from firewood.utils import _pair_padding, _single_padding, _triple_padding
 #
 # The context is used by some regularization algorithms like path-length reg.
 
-# If need gradients of weight, use `set_conv_weight_gradients_disabled(False)`
-# If calculate gradients of weight when it is True, torch will raise an error.
-# RuntimeError: One of the differentiated Tensors appears to not have been used
-# in the graph.
-set_conv_weight_gradients_disabled(True)
-
 
 @contextlib.contextmanager
 def no_weight_gradients_in_gfix_conv() -> Any:
@@ -605,41 +599,17 @@ def conv_weight_cudnn(
     """
     support conv2d, conv3d
     """
-    if utils.is_newer_torch("1.11.0"):
-        operation_name = "aten::convolution_backward"
-        operation = torch._C._jit_get_operation(operation_name)[0]
-        rank = len(weight_size) - 2
-        weight = torch.zeros(1, device=input.device, dtype=input.dtype).expand(
-            weight_size
-        )
-        output_index = 1
-        output_mask = [False] * 3
-        output_mask[output_index] = True
-        return operation(
-            grad_output,
-            input,
-            weight,
-            None,
-            utils.normalize_int_tuple(stride, rank),
-            utils.normalize_int_tuple(padding, rank),
-            utils.normalize_int_tuple(dilation, rank),
-            False,
-            [0],
-            groups,
-            output_mask,
-        )[output_index]
-    else:
-        operation_name = "aten::cudnn_convolution_backward_weight"
-        return torch._C._jit_get_operation(operation_name)(  # type: ignore
-            weight_size,
-            grad_output,
-            input,
-            padding,
-            stride,
-            dilation,
-            groups,
-            *_CUDNN_FLAGS,
-        )
+    operation_name = "aten::cudnn_convolution_backward_weight"
+    return torch._C._jit_get_operation(operation_name)(  # type: ignore
+        weight_size,
+        grad_output,
+        input,
+        padding,
+        stride,
+        dilation,
+        groups,
+        *_CUDNN_FLAGS,
+    )
 
 
 def conv_transpose_weight_cudnn(
@@ -654,41 +624,17 @@ def conv_transpose_weight_cudnn(
     """
     support conv_transpose2d, conv_transpose3d
     """
-    if utils.is_newer_torch("1.11.0"):
-        operation_name = "aten::convolution_backward"
-        operation = torch._C._jit_get_operation(operation_name)[0]
-        rank = len(weight_size) - 2
-        weight = torch.zeros(1, device=input.device, dtype=input.dtype).expand(
-            weight_size
-        )
-        output_index = 1
-        output_mask = [False] * 3
-        output_mask[output_index] = True
-        return operation(
-            grad_output,
-            input,
-            weight,
-            None,
-            utils.normalize_int_tuple(stride, rank),
-            utils.normalize_int_tuple(padding, rank),
-            utils.normalize_int_tuple(dilation, rank),
-            True,
-            [0],
-            groups,
-            output_mask,
-        )[output_index]
-    else:
-        operation_name = "aten::cudnn_convolution_transpose_backward_weight"
-        return torch._C._jit_get_operation(operation_name)(  # type: ignore
-            weight_size,
-            grad_output,
-            input,
-            padding,
-            stride,
-            dilation,
-            groups,
-            *_CUDNN_FLAGS,
-        )
+    operation_name = "aten::cudnn_convolution_transpose_backward_weight"
+    return torch._C._jit_get_operation(operation_name)(  # type: ignore
+        weight_size,
+        grad_output,
+        input,
+        padding,
+        stride,
+        dilation,
+        groups,
+        *_CUDNN_FLAGS,
+    )
 
 
 def conv_transpose1d_weight(
@@ -767,23 +713,16 @@ def _load_operation(
         "padding": padding,
     }
 
-    # conv_weight_cudnn is deprecated in torch 1.11.0
-    # But, grad.convNd_weight has out of memory issue.
-    conv_weight_cudnn_deprecated = False  # utils.is_newer_torch("1.11.0")
     key = "conv"
     if transposed:
         conv_kwargs.update(output_padding=output_padding)
         key += "_transpose"
     conv_op_name = f"{key}{rank}d"
-    if utils.is_cuda(device) and not conv_weight_cudnn_deprecated and rank > 1:
+    weight_op_name = f"{conv_op_name}_weight"
+    weight_op_module = sys.modules[__name__] if transposed else grad
+    if utils.is_older_torch("1.11.0") and utils.is_cuda(device) and rank > 1:
         weight_op_name = f"{key}_weight_cudnn"
         weight_op_module = sys.modules[__name__]
-    elif transposed:
-        weight_op_name = conv_op_name + "_weight"
-        weight_op_module = sys.modules[__name__]
-    else:
-        weight_op_name = conv_op_name + "_weight"
-        weight_op_module = grad
     conv_operation = getattr(F, conv_op_name)
     weight_operation = getattr(weight_op_module, weight_op_name)
 
