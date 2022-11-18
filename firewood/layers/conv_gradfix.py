@@ -1,6 +1,5 @@
 import contextlib
 import functools
-import itertools
 import math
 import sys
 from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union, cast
@@ -29,7 +28,12 @@ from firewood.common.backend import (
 from firewood.common.constant import NULL_TENSOR
 from firewood.common.types import DEVICE, INT, SAME_PADDING
 from firewood.layers import initializers
-from firewood.utils import _pair_padding, _single_padding, _triple_padding
+from firewood.utils import (
+    _padding_for_functional_pad,
+    _pair_padding,
+    _single_padding,
+    _triple_padding,
+)
 
 # Forcefully disable computation of gradients with respect to the weights.
 #
@@ -166,7 +170,9 @@ class _GFixConvNd(nn.Module):
                 dilation=self.dilation,
             )
         else:
-            padding = _calc_padding(rank=self.rank, padding=padding)
+            padding = _padding_for_functional_pad(self.rank, padding)
+        if len(set(padding)) == 1:
+            padding = (padding[0],) * self.rank
         self.padding = padding
 
         if len(self.padding) == self.rank:
@@ -219,22 +225,17 @@ class _GFixConvNd(nn.Module):
         else:
             padding = self.padding
         if self.force_default:
-            if self.transposed:
-                return functools.partial(
-                    getattr(F, f"conv_transpose{self.rank}d"),
-                    stride=self.stride,
-                    padding=padding,
-                    output_padding=self.output_padding,
-                    groups=self.groups,
-                    dilation=self.dilation,
-                )
-            return functools.partial(
-                getattr(F, f"conv{self.rank}d"),
-                stride=self.stride,
+            operation_name = f"conv{self.rank}d"
+            kwargs = dict(
                 padding=padding,
+                stride=self.stride,
                 dilation=self.dilation,
                 groups=self.groups,
             )
+            if self.transposed:
+                operation_name = f"conv_transpose{self.rank}d"
+                kwargs.update(output_padding=self.output_padding)
+            return functools.partial(getattr(F, operation_name), **kwargs)
         return _load_operation(
             transposed=self.transposed,
             weight_shape=self.weight.shape,
@@ -507,23 +508,6 @@ def _calc_same_padding(
     padding = tuple(reversed(pad))
     if len(set(padding)) == 1:
         padding = (padding[0],) * len(kernel_size)
-    return padding
-
-
-def _calc_padding(rank: int, padding: INT) -> Tuple[int, ...]:
-    if isinstance(padding, int):
-        return (padding,) * rank
-    if len(padding) == rank:
-        padding = cast(Tuple[int, ...], _reverse_repeat_tuple(padding, 2))
-    elif len(padding) == rank * 2:
-        reversed_pad = [
-            padding[i * 2 : (i + 1) * 2] for i in range(rank - 1, -1, -1)
-        ]
-        padding = tuple(itertools.chain.from_iterable(reversed_pad))
-    else:
-        raise ValueError("Invalid padding: {}".format(padding))
-    if len(set(padding)) == 1:
-        padding = (padding[0],) * rank
     return padding
 
 

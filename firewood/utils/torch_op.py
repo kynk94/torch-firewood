@@ -1,9 +1,14 @@
-from typing import Any, Optional, Sequence, Tuple, Union
+from typing import Any, Optional, Sequence, Tuple, Union, cast
 
 import torch
 import torch.nn as nn
 from torch import Tensor
-from torch.nn.modules.utils import _pair, _single, _triple
+from torch.nn.modules.utils import (
+    _pair,
+    _reverse_repeat_tuple,
+    _single,
+    _triple,
+)
 
 from firewood.common.types import DEVICE, INT, SAME_PADDING
 from firewood.utils.common import search_attr
@@ -123,6 +128,31 @@ def clone_to_cpu_tensor(tensor: Tensor) -> Tensor:
     if tensor.device.type == "cpu":
         return tensor.clone()
     return tensor.detach().cpu()
+
+
+def _padding_for_functional_pad(rank: int, padding: INT) -> Tuple[int, ...]:
+    """
+    Convert padding to a tuple of length 2 * rank for `torch.nn.functional.pad`.
+
+    Examples:
+        >>> _padding_for_functional_pad(2, 1)
+        (1, 1, 1, 1)
+        >>> _padding_for_functional_pad(2, (1, 2))
+        (2, 2, 1, 1)
+        >>> _padding_for_functional_pad(2, (1, 2, 3, 4))
+        (3, 4, 1, 2)
+    """
+    if isinstance(padding, int):
+        return (padding,) * rank * 2
+    if len(padding) == rank:
+        return cast(Tuple[int, ...], _reverse_repeat_tuple(padding, 2))
+    if len(padding) == rank * 2:
+        return tuple(
+            p
+            for i in range(rank - 1, -1, -1)
+            for p in padding[i * 2 : (i + 1) * 2]
+        )
+    raise ValueError("Invalid padding: {}".format(padding))
 
 
 def _single_padding(

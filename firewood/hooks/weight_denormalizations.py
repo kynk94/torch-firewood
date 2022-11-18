@@ -2,10 +2,15 @@
 Weight Denormalization introduced in StyleGAN2.
 
 `weight_denorm(conv)` makes the following changes to the `conv` module.
+And linear layers are supported too.
 before:
+    operate by calling `conv(input)`
+
     output = weight * input + bias
 after:
-    module.use_extra_inputs = True  # The extra input is modulation_features.
+    operate by calling `conv(input, modulation_features)`
+
+    conv.affine = nn.Linear(modulation_features.size(-1), weight.size(1))
     modulated_weight = weight * affine(modulation_features)
     demodulation_coeff = 1 / LA.vector_norm(modulated_weight)
     output = modulated_weight * input * demodulation_coeff + bias
@@ -143,14 +148,14 @@ class WeightDeNorm:
     def __weight_denorm_fused(
         self, module: nn.Module, weight: Tensor, gamma: Tensor, batch_size: int
     ) -> None:
+        modulated_weight = _weight_modulation(weight, gamma)
         if self.demodulate:
-            modulated_weight = _weight_modulation(weight, gamma)
             demodulation_coeff = _calc_demodulation_coeff(
                 modulated_weight, fused=True, eps=self.eps
             )
-            weight = (modulated_weight * demodulation_coeff).flatten(0, 1)
+            modulated_weight = modulated_weight * demodulation_coeff
         utils.keep_setattr(module, "groups", batch_size)
-        setattr(module, self.name, weight)
+        setattr(module, self.name, modulated_weight.flatten(0, 1))
 
     def __weight_denorm_not_fused(
         self, module: nn.Module, weight: Tensor, gamma: Tensor

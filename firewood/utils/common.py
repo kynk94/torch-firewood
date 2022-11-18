@@ -15,6 +15,7 @@ from typing import (
     overload,
 )
 
+import sympy
 from numpy import ndarray
 from packaging.version import Version
 from pkg_resources import get_distribution
@@ -347,11 +348,31 @@ def maximum_multiple_of_divisor(n: int, divisor: int) -> int:
     return n - (n % divisor)
 
 
+def median_two_divisors(n: int) -> Tuple[int, int]:
+    """
+    Return the median two divisors of `n`.
+    If `n` is a perfect square, return the two divisors that are equal.
+
+    Examples:
+        >>> median_two_divisors(512)
+        (16, 32)
+        >>> median_two_divisors(1024)
+        (32, 32)
+    """
+    if n == 0:
+        return 0, 0
+    divisors = sympy.divisors(n)
+    smaller = divisors[(len(divisors) - 1) // 2]
+    larger = n // smaller
+    return smaller, larger
+
+
 def squared_number(n: Union[int, float]) -> int:
     """
     Return square root of `n` if `n` is a perfect square using Babylonian
     algorithm. `n` must be a positive integer. Otherwise, if `n` is a positive
     float number, it must have zero decimal places.
+    Faster than `math.sqrt` for large numbers.
 
     Returns:
         The square root of `n` if is a perfect square, otherwise 0.
