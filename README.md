@@ -54,11 +54,11 @@ All layers are compatible with official pytorch `nn.Module` and support `ddp` st
 * [x] AdaIN
 * [ ] SPADE
 
-### Introduced from PGGAN
+### Introduced in PGGAN
 
 * [x] Learning rate Equalizer hooks
 
-### Introduced from StyleGAN
+### Introduced in StyleGAN
 
 * [x] Weight Gradient Fixable Convolution
   * All options are compatible with tensorflow convolution. (e.g. "same" padding)  
