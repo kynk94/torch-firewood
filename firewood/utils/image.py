@@ -4,6 +4,7 @@ from typing import Any, Optional, Sequence, Tuple, Union, cast, overload
 import imageio
 import numpy as np
 import torch
+import torch.nn.functional as F
 import torchvision.transforms.functional_tensor as TFT
 import torchvision.utils as TU
 from numpy import ndarray
@@ -12,10 +13,12 @@ from torch import Tensor
 
 from firewood.common.types import INT
 from firewood.utils.common import (
+    median_two_divisors,
     normalize_float_tuple,
     normalize_int_tuple,
     squared_number,
 )
+from firewood.utils.torch_op import _padding_for_functional_pad
 
 
 def alpha_smoothing(
@@ -437,7 +440,58 @@ def get_semantic_edge(input: Tensor) -> Tensor:
     return edge.to(dtype=input.dtype)
 
 
-def tensor_resize(
+def blur_pad(
+    image: Tensor,
+    padding: INT,
+    sigma: Optional[float] = None,
+    truncate: float = 4.0,
+) -> Tensor:
+    """
+    Reflect padding and add Gaussian blur to padded area.
+    Support backpropagation and GPU acceleration.
+
+    Reference to `scipy.gaussian_filter` and `recreate_aligned_images` of
+    https://github.com/NVlabs/ffhq-dataset.
+
+    Args:
+        image: (N, C, H, W) image tensor
+        padding: Padding size.
+            (top, bottom, left, right) or (height, width) or int
+        sigma: Sigma of Gaussian kernel.
+        truncate: Truncate the Gaussian kernel at this many standard deviations.
+            kernel_size = 2 * ceil(sigma * truncate) + 1
+
+    Returns:
+        A tensor of blurred image. (N, C, H + 2 * padding, W + 2 * padding)
+    """
+    padding = _padding_for_functional_pad(2, padding)
+    padded_image = F.pad(image, padding, mode="reflect")
+    H, W = padded_image.shape[-2:]
+    L, R, T, B = padding
+    if sigma is None:
+        sigma = np.hypot(H, W) * 0.02
+    kernel_size = 2 * int(np.ceil(sigma * truncate)) + 1
+    blurred_image = TFT.gaussian_blur(
+        img=padded_image, kernel_size=(kernel_size,) * 2, sigma=(sigma,) * 2
+    )
+
+    height_mask = torch.arange(H, dtype=torch.float32, device=image.device)
+    width_mask = torch.arange(W, dtype=torch.float32, device=image.device)
+    height_mask = torch.minimum(height_mask / T, height_mask.flip(0) / B)
+    width_mask = torch.minimum(width_mask / L, width_mask.flip(0) / R)
+    mask = 1 - torch.minimum(height_mask.unsqueeze(-1), width_mask.unsqueeze(0))
+
+    padded_image = padded_image - (mask * 3.0 + 1.0).clip(0.0, 1.0) * (
+        padded_image - blurred_image
+    )
+    # ffhq-dataset uses median. But torch.median not operate along axis.
+    padded_image = padded_image - mask.clip(0.0, 1.0) * (
+        padded_image - padded_image.mean(dim=(2, 3), keepdim=True)
+    )
+    return padded_image
+
+
+def resize(
     image: Tensor,
     size: INT,
     interpolation: str = "bilinear",
@@ -460,11 +514,12 @@ def tensor_resize(
     interpolation = interpolation.lower()
     if isinstance(size, int):
         short, long = sorted(image.shape[-2:])
-        if short == long:
-            return tensor_resize(image, (size, size), interpolation, antialias)
         if long == size:
             return image
-        size = (round(short * size / long), size)
+        if short == long:
+            size = (size, size)
+        else:
+            size = (round(short * size / long), size)
     elif isinstance(size, Sequence):
         size = normalize_int_tuple(size, 2)
     else:
@@ -488,3 +543,119 @@ def tensor_resize(
     if need_twice:
         image = TFT.resize(image, temp_size, interpolation, antialias=antialias)
     return TFT.resize(image, size, interpolation, antialias=antialias)
+
+
+def resize_crop_or_pad(
+    image: Tensor, size: INT, mode: str = "constant"
+) -> Tensor:
+    """
+    Resize a tensor of images to given `size` by cropping or padding center.
+
+    Args:
+        image: Tensor of shape (C, H, W) or (N, C, H, W).
+        size: Desired output size. An integer or a sequence of two integers.
+            If `size` is smaller than the current size, the image will be
+            cropped.
+            If `size` is larger than the current size, the image will be padded.
+        mode: Padding mode.
+            One of {`constant`, `reflect`, `replicate`, `circular`, `blur`}.
+            `blur`: Pad the image with reflection and blur padded area.
+    """
+    size = normalize_int_tuple(size, 2)
+    H, W = image.shape[-2:]
+    diff = (H - size[0], W - size[1])
+    if diff == (0, 0):
+        return image
+    top, mod = divmod(abs(diff[0]), 2)
+    bottom = top + mod
+    left, mod = divmod(abs(diff[1]), 2)
+    right = left + mod
+
+    def _pad(
+        image: Tensor, left: int, right: int, top: int, bottom: int
+    ) -> Tensor:
+        if mode == "blur":
+            return blur_pad(image, (top, bottom, left, right))
+        return F.pad(image, (left, right, top, bottom), mode=mode)
+
+    if all(d >= 0 for d in diff):
+        return F.pad(image, (-left, -right, -top, -bottom))
+    if all(d <= 0 for d in diff):
+        return _pad(image, top, bottom, left, right)
+    if diff[0] > 0:
+        image = F.pad(image, (0, 0, -top, -bottom))
+    elif diff[0] < 0:
+        image = _pad(image, 0, 0, top, bottom)
+    if diff[1] > 0:
+        image = F.pad(image, (-left, -right, 0, 0))
+    elif diff[1] < 0:
+        image = _pad(image, left, right, 0, 0)
+    return image
+
+
+def image_to_patch(
+    image: Tensor, patch_size: Optional[int] = None, mode: str = "crop"
+) -> Tensor:
+    """
+    Args:
+        image: (N, C, H, W) or (C, H, W)
+        patch_size: The size of patch, P. If None, calcuate as below.
+            If H == W, P = median_divisor(H)
+            If H != W, P = gcd(H, W)
+        mode: The mode of patching.
+            {`crop`, `constant`, `reflect`, `replicate`, `circular`, `blur`}
+            `crop`: Crop the image to patches.
+            `blur`: Pad the image with reflection and blur padded area.
+            Other modes: Same as `torch.nn.functional.pad`.
+
+    Returns:
+        A tensor of patches. (N, NP, C, P, P) or (NP, C, P, P)
+    """
+    is_batch_input = image.ndim == 4
+    if not is_batch_input:
+        image = image.unsqueeze(0)
+    H, W = image.shape[-2:]
+    P = patch_size
+    if P is None:
+        if H != W:
+            P = np.gcd(H, W)
+        else:
+            P = median_two_divisors(H)[-1]
+    H_mod, W_mod = H % P, W % P
+    if H_mod or W_mod:
+        if mode not in {"crop", "constant", "reflect", "blur"}:
+            raise ValueError(f"Unexpected mode: {mode}")
+        if mode == "crop":
+            size = (H - H_mod, W - W_mod)
+        else:
+            size = (H + P - H_mod, W + P - W_mod)
+        image = resize_crop_or_pad(image, size, mode)
+    patches = (
+        image.unfold(2, P, P)
+        .unfold(3, P, P)
+        .flatten(2, 3)
+        .permute(0, 2, 1, 3, 4)
+    )
+    if is_batch_input:
+        return patches
+    return patches.squeeze(0)
+
+
+def patch_to_image(patches: Tensor, n_height: Optional[int] = None) -> Tensor:
+    """
+    Args:
+        patches: (N, NP, C, P, P) or (NP, C, P, P)
+        n_height: The number of patches in height. If None, it will be
+            calculated as smaller value of `median_two_divisors(NP)`.
+    """
+    is_batch_input = patches.ndim == 5
+    if not is_batch_input:
+        patches = patches.unsqueeze(0)
+    N, NP, C, P, _ = patches.shape
+    if n_height is None:
+        n_height, n_width = median_two_divisors(NP)
+    else:
+        n_width = NP // n_height
+    patches = patches.view(N, n_height, n_width, C, P, P)
+    patches = patches.permute(0, 3, 1, 4, 2, 5)
+    return patches.reshape(N, C, n_height * P, n_width * P).contiguous()

@@ -1,13 +1,16 @@
+import itertools
 from typing import Any, Iterable, List, Tuple, Union
 
 import pytest
 
 
 def gen_params(
-    keys: Union[str, List[str]], values: List[Any]
+    keys: Union[str, List[str]], values: List[Any], product: bool = True
 ) -> Tuple[List[str], List[Any]]:
     if isinstance(keys, str):
         keys = [keys]
+    elif len(keys) > 1 and product:
+        values = itertools.product(*values)
     parameters = []
     id_string = ", ".join([key + "={}" for key in keys])
     for value in values:

@@ -1,4 +1,4 @@
-FROM nvidia/cuda:11.7.1-cudnn8-devel-ubuntu20.04
+FROM nvidia/cuda:11.6.1-cudnn8-devel-ubuntu20.04
 ENV PATH="/usr/local/cuda/bin:${PATH}" \
     LD_LIBRARY_PATH="/usr/local/cuda/lib64:${LD_LIBRARY_PATH}" \
     TORCH_CUDA_ARCH_LIST="3.7;5.0;6.0;7.0;7.5;8.0" \
@@ -69,7 +69,7 @@ RUN if [ ${DEFAULT_SHELL} = "zsh" ]; \
     fi
 
 COPY . ${HOME}/torch-firewood/
-RUN sudo chmod -R 777 ${HOME}/torch-firewood/
+RUN sudo chown -R ${USERNAME}:${USERNAME} ${HOME}/torch-firewood/
 
 # Install python packages by pip and conda
 ARG USE_JUPYTER="false"
@@ -89,7 +89,6 @@ RUN if [ ${BUILD} = "true" ]; \
     && bash ./install.sh \
     ; \
     fi
-RUN sudo chmod -R 755 ${HOME}/torch-firewood/ && sudo chmod 777 ${HOME}/torch-firewood/
 
 EXPOSE 6006 8888
 

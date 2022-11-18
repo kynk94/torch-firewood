@@ -35,7 +35,7 @@ from firewood.trainer.utils.data import (
     torchvision_train_val_test_datasets,
     update_dataloader_of_trainer,
 )
-from firewood.utils.image import tensor_resize
+from firewood.utils.image import resize
 
 
 class StyleGAN(pl.LightningModule):
@@ -178,7 +178,7 @@ class StyleGAN(pl.LightningModule):
         )
 
         alpha, resolution = self.get_alpha_resolution()
-        real_images = tensor_resize(real_images, resolution, antialias=True)
+        real_images = resize(real_images, resolution, antialias=True)
         optimizers = self.optimizers()
         for optimizer_idx in range(len(optimizers)):
             if optimizer_idx == 0:
@@ -211,7 +211,7 @@ class StyleGAN(pl.LightningModule):
         real_images = get_maximum_multiple_batch(
             input=real_images, divisor=self.hparams.mbstd_group
         )
-        real_images = tensor_resize(real_images, resolution, antialias=True)
+        real_images = resize(real_images, resolution, antialias=True)
 
         latent = self.generate_latent(real_images.size(0))
         generated_image: Tensor = self.generator(

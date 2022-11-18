@@ -124,7 +124,7 @@ class _ImageCallback(Callback):
             or max(grid.shape[-2:]) < self.grid_max_resolution
         ):
             return grid
-        return utils.image.tensor_resize(
+        return utils.image.resize(
             grid, self.grid_max_resolution, antialias=True
         )
 

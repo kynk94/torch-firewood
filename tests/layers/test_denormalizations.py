@@ -4,10 +4,9 @@ import torch.nn.functional as F
 
 from firewood.layers.denormalizations import AdaptiveNorm
 from firewood.layers.linear import Linear
-from tests.helpers.utils import gen_params
 
 
-@pytest.mark.parametrize(*gen_params("unbiased", [True, False]))
+@pytest.mark.parametrize("unbiased", (True, False))
 def test_adain(unbiased: bool):
     eps = 1e-9
     B = 2
@@ -39,7 +38,7 @@ def test_adain(unbiased: bool):
     ), f"Foward result mismatch. l1: {F.l1_loss(x_modulated, x_modulated_custom)}"
 
 
-@pytest.mark.parametrize(*gen_params("unbiased", [True, False]))
+@pytest.mark.parametrize("unbiased", (True, False))
 def test_adain_projection(unbiased: bool):
     eps = 1e-9
     B = 2

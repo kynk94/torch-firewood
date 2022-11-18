@@ -10,5 +10,6 @@ pre-commit
 pytest
 pytest-cov
 pytorch-lightning
+sympy
 torchmetrics[image]
 types-setuptools
