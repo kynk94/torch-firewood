@@ -1,4 +1,3 @@
-import itertools
 import random
 
 import pytest
@@ -19,7 +18,7 @@ from tests.stylegan3.torch_utils.ops.upfirdn2d import (
 )
 
 
-@pytest.mark.parametrize(*gen_params("padding", range(-4, 5, 2)))
+@pytest.mark.parametrize("padding", range(-4, 5, 2))
 def test_filter2d_cpu(padding: int) -> None:
     lr = 1e-2
     kernel = [random.randint(1, 5) for _ in range(4)]
@@ -68,7 +67,7 @@ def test_filter2d_cpu(padding: int) -> None:
 
 
 @runif(min_gpus=1)
-@pytest.mark.parametrize(*gen_params("padding", range(-4, 5, 2)))
+@pytest.mark.parametrize("padding", range(-4, 5, 2))
 def test_filter2d_gpu(padding: int) -> None:
     lr = 1e-2
     kernel = [random.randint(1, 5) for _ in range(4)]
@@ -117,12 +116,7 @@ def test_filter2d_gpu(padding: int) -> None:
     ), f"Backward result mismatch. l1: {F.l1_loss(x_custom, x_original)}"
 
 
-@pytest.mark.parametrize(
-    *gen_params(
-        ["up", "padding"],
-        itertools.product((2, 3), range(-2, 3)),
-    )
-)
+@pytest.mark.parametrize(*gen_params(["up", "padding"], [(2, 3), range(-2, 3)]))
 def test_upfir2d_cpu(up: int, padding: int) -> None:
     lr = 1e-2
     kernel = [random.randint(1, 5) for _ in range(4)]
@@ -175,12 +169,7 @@ def test_upfir2d_cpu(up: int, padding: int) -> None:
 
 
 @runif(min_gpus=1)
-@pytest.mark.parametrize(
-    *gen_params(
-        ["up", "padding"],
-        itertools.product((2, 3), range(-2, 3)),
-    )
-)
+@pytest.mark.parametrize(*gen_params(["up", "padding"], [(2, 3), range(-2, 3)]))
 def test_upfir2d_gpu(up: int, padding: int) -> None:
     lr = 1e-2
     kernel = [random.randint(1, 5) for _ in range(4)]
@@ -234,10 +223,7 @@ def test_upfir2d_gpu(up: int, padding: int) -> None:
 
 
 @pytest.mark.parametrize(
-    *gen_params(
-        ["down", "padding"],
-        itertools.product((2, 3), range(-2, 3)),
-    )
+    *gen_params(["down", "padding"], [(2, 3), range(-2, 3)])
 )
 def test_firdown2d_cpu(down: int, padding: int) -> None:
     lr = 1e-2
@@ -289,10 +275,7 @@ def test_firdown2d_cpu(down: int, padding: int) -> None:
 
 @runif(min_gpus=1)
 @pytest.mark.parametrize(
-    *gen_params(
-        ["down", "padding"],
-        itertools.product((2, 3), range(-2, 3)),
-    )
+    *gen_params(["down", "padding"], [(2, 3), range(-2, 3)])
 )
 def test_firdown2d_gpu(down: int, padding: int) -> None:
     lr = 1e-2
@@ -344,10 +327,7 @@ def test_firdown2d_gpu(down: int, padding: int) -> None:
 
 
 @pytest.mark.parametrize(
-    *gen_params(
-        ["up", "down", "padding"],
-        itertools.product((2, 3), (2, 3), range(-2, 3)),
-    )
+    *gen_params(["up", "down", "padding"], [(2, 3), (2, 3), range(-2, 3)])
 )
 def test_upfirdn2d_cpu(up: int, down: int, padding: int) -> None:
     lr = 1e-2
@@ -404,10 +384,7 @@ def test_upfirdn2d_cpu(up: int, down: int, padding: int) -> None:
 
 @runif(min_gpus=1)
 @pytest.mark.parametrize(
-    *gen_params(
-        ["up", "down", "padding"],
-        itertools.product((2, 3), (2, 3), range(-2, 3)),
-    )
+    *gen_params(["up", "down", "padding"], [(2, 3), (2, 3), range(-2, 3)])
 )
 def test_upfirdn2d_gpu(up: int, down: int, padding: int) -> None:
     lr = 1e-2

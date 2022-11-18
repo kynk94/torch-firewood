@@ -1,4 +1,3 @@
-import itertools
 import random
 from typing import Type, Union
 
@@ -98,10 +97,7 @@ def test_conv_transpose_output_shape():
 
 
 @pytest.mark.parametrize(
-    *gen_params(
-        ["rank", "stride", "padding"],
-        itertools.product([1, 2, 3], [1, 2], [0, "same"]),
-    )
+    *gen_params(["rank", "stride", "padding"], [(1, 2, 3), (1, 2), (0, "same")])
 )
 def test_no_weight_gradients_in_gfix_conv(
     rank: int, stride: int, padding: Union[str, int]
@@ -158,7 +154,7 @@ def test_no_weight_gradients_in_gfix_conv(
     ), f"Forward weight_grad should be different. l1: {F.l1_loss(weight_grad, weight_grad_copy)}"
 
 
-@pytest.mark.parametrize(*gen_params(["rank"], [1, 2, 3]))
+@pytest.mark.parametrize("rank", (1, 2, 3))
 def test_conv_same_padding_gradient_with_nn(rank: int) -> None:
     in_channels = 3
     out_channels = 10
@@ -219,10 +215,7 @@ def test_conv_same_padding_gradient_with_nn(rank: int) -> None:
 
 
 @pytest.mark.parametrize(
-    *gen_params(
-        ["rank", "stride", "padding"],
-        itertools.product([1, 2, 3], [1, 2], [1, 2]),
-    )
+    *gen_params(["rank", "stride", "padding"], [(1, 2, 3), (1, 2), (1, 2)])
 )
 def test_conv_with_nn_cpu(rank: int, stride: int, padding: int) -> None:
     lr = 1e-2
@@ -309,8 +302,7 @@ def test_conv_with_nn_cpu(rank: int, stride: int, padding: int) -> None:
 @runif(min_gpus=1)
 @pytest.mark.parametrize(
     *gen_params(
-        ["rank", "stride", "padding"],
-        itertools.product(range(1, 4), range(1, 3), range(2)),
+        ["rank", "stride", "padding"], [(1, 2, 3), range(1, 3), range(2)]
     )
 )
 def test_conv_with_nn_gpu(rank: int, stride: int, padding: int) -> None:
@@ -400,8 +392,7 @@ def test_conv_with_nn_gpu(rank: int, stride: int, padding: int) -> None:
 
 @pytest.mark.parametrize(
     *gen_params(
-        ["rank", "stride", "padding"],
-        itertools.product(range(1, 4), range(1, 3), range(2)),
+        ["rank", "stride", "padding"], [(1, 2, 3), range(1, 3), range(2)]
     )
 )
 def test_conv_transpose_with_nn_cpu(
@@ -494,8 +485,7 @@ def test_conv_transpose_with_nn_cpu(
 @runif(min_gpus=1)
 @pytest.mark.parametrize(
     *gen_params(
-        ["rank", "stride", "padding"],
-        itertools.product(range(1, 4), range(1, 3), range(2)),
+        ["rank", "stride", "padding"], [(1, 2, 3), range(1, 3), range(2)]
     )
 )
 def test_conv_transpose_with_nn_gpu(
@@ -592,7 +582,7 @@ def test_conv_transpose_with_nn_gpu(
 
 @runif(min_gpus=1, max_torch="1.10.9")
 @pytest.mark.parametrize(
-    *gen_params(["stride", "padding"], itertools.product(range(1, 3), range(2)))
+    *gen_params(["stride", "padding"], [range(1, 3), range(2)])
 )
 def test_conv2d_with_stylegan_gpu(stride: int, padding: int) -> None:
     conv2d_gradfix.enabled = True
@@ -677,7 +667,7 @@ def test_conv2d_with_stylegan_gpu(stride: int, padding: int) -> None:
 
 @runif(min_gpus=1, max_torch="1.10.9")
 @pytest.mark.parametrize(
-    *gen_params(["stride", "padding"], itertools.product(range(1, 3), range(2)))
+    *gen_params(["stride", "padding"], [range(1, 3), range(2)])
 )
 def test_conv_transpose2d_with_stylegan_gpu(stride: int, padding: int) -> None:
     conv2d_gradfix.enabled = True
@@ -763,8 +753,7 @@ def test_conv_transpose2d_with_stylegan_gpu(stride: int, padding: int) -> None:
 @runif(tensorflow_installed=True)
 @pytest.mark.parametrize(
     *gen_params(
-        ["rank", "transposed", "stride"],
-        itertools.product([1, 2, 3], [False, True], [1, 2]),
+        ["rank", "transposed", "stride"], [(1, 2, 3), (False, True), (1, 2)]
     )
 )
 def test_same_padding_with_tensorflow(
@@ -869,7 +858,7 @@ def test_same_padding_with_tensorflow(
 
 
 @runif(min_torch="1.9.0")
-@pytest.mark.parametrize("rank", [1, 2, 3])
+@pytest.mark.parametrize("rank", (1, 2, 3))
 def test_same_padding_with_nn(rank: int) -> None:
     lr = 1e-2
     in_channels = 3

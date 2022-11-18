@@ -1,4 +1,3 @@
-import itertools
 from typing import List, Type
 
 import pytest
@@ -15,7 +14,7 @@ from tests.helpers.utils import gen_params
 @pytest.mark.parametrize(
     *gen_params(
         ["rank", "transposed", "stride", "padding", "dilation"],
-        itertools.product([1, 2, 3], [False, True], [1, 2], [0, 1], [1, 2]),
+        [(1, 2, 3), (False, True), (1, 2), (0, 1), (1, 2)],
     )
 )
 def test_depth_separable_conv_shape(
@@ -72,9 +71,7 @@ def test_depth_separable_conv_shape(
 
 
 @pytest.mark.parametrize(
-    *gen_params(
-        ["rank", "transposed"], itertools.product([1, 2, 3], [False, True])
-    )
+    *gen_params(["rank", "transposed"], [(1, 2, 3), (False, True)])
 )
 def test_depth_separable_conv_backprop_cpu(rank: int, transposed: bool) -> None:
     lr = 1e-2
@@ -130,9 +127,7 @@ def test_depth_separable_conv_backprop_cpu(rank: int, transposed: bool) -> None:
 
 @runif(min_gpus=1)
 @pytest.mark.parametrize(
-    *gen_params(
-        ["rank", "transposed"], itertools.product([1, 2, 3], [False, True])
-    )
+    *gen_params(["rank", "transposed"], [(1, 2, 3), (False, True)])
 )
 def test_depth_separable_conv_backprop_gpu(rank: int, transposed: bool) -> None:
     lr = 1e-2
@@ -191,7 +186,7 @@ def test_depth_separable_conv_backprop_gpu(rank: int, transposed: bool) -> None:
 @pytest.mark.parametrize(
     *gen_params(
         ["rank", "transposed", "stride", "padding"],
-        itertools.product([2, 3], [False, True], [1, 2], [0, 1]),
+        [(2, 3), (False, True), (1, 2), (0, 1)],
     )
 )
 def test_spatial_separable_conv_shape(
@@ -246,9 +241,7 @@ def test_spatial_separable_conv_shape(
 
 
 @pytest.mark.parametrize(
-    *gen_params(
-        ["rank", "transposed"], itertools.product([2, 3], [False, True])
-    )
+    *gen_params(["rank", "transposed"], [(2, 3), (False, True)])
 )
 def test_spatial_separable_conv_backprop_cpu(
     rank: int, transposed: bool
@@ -304,9 +297,7 @@ def test_spatial_separable_conv_backprop_cpu(
 
 @runif(min_gpus=1)
 @pytest.mark.parametrize(
-    *gen_params(
-        ["rank", "transposed"], itertools.product([2, 3], [False, True])
-    )
+    *gen_params(["rank", "transposed"], [(2, 3), (False, True)])
 )
 def test_spatial_separable_conv_backprop_gpu(
     rank: int, transposed: bool

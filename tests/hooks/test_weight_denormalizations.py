@@ -5,6 +5,7 @@ import torch.nn.functional as F
 from firewood.hooks.weight_denormalizations import remove_weight_denorm
 from firewood.layers.conv_blocks import Conv2dBlock
 from tests.helpers.runif import runif
+from tests.helpers.utils import gen_params
 from tests.stylegan3.training import networks_stylegan2, networks_stylegan3
 
 
@@ -32,15 +33,23 @@ def test_assign_and_remove() -> None:
 
 
 @runif(min_gpus=1)
-@pytest.mark.parametrize("dtype", [torch.float32, torch.float16])
-def test_with_stylegan2(dtype: torch.dtype) -> None:
+@pytest.mark.parametrize(
+    *gen_params(
+        ["demodulate", "dtype"],
+        [(True, False), (torch.float32, torch.float16)],
+    )
+)
+def test_with_stylegan2(demodulate: bool, dtype: torch.dtype) -> None:
     x = torch.randn(2, 3, 64, 64, dtype=dtype, device="cuda")
     s = torch.randn(2, 5, dtype=dtype, device="cuda")
 
     kwargs = dict(
         bias=False,
         weight_normalization="denorm",
-        weight_normalization_args={"modulation_features": 5},
+        weight_normalization_args={
+            "demodulate": demodulate,
+            "modulation_features": 5,
+        },
     )
     block = Conv2dBlock(3, 3, 3, **kwargs).cuda()
     weight = block.layers["weighting"].weight_orig.detach()
@@ -48,15 +57,16 @@ def test_with_stylegan2(dtype: torch.dtype) -> None:
     output_custom = block(x, s)
     styles = block.layers["weighting"].gamma_affine(s)
     output_official = networks_stylegan2.modulated_conv2d(
-        x, weight, styles, flip_weight=True
+        x, weight, styles, demodulate=demodulate, flip_weight=True
     )
 
     assert torch.allclose(
-        output_custom, output_official, rtol=1e-4, atol=1e-7
+        output_custom, output_official, rtol=1e-4, atol=5e-6
     ), f"Forward result mismatch. l1: {F.l1_loss(output_custom, output_official)}"
 
 
-def test_with_stylegan3() -> None:
+@pytest.mark.parametrize("demodulate", (True, False))
+def test_with_stylegan3(demodulate: bool) -> None:
     x = torch.randn(2, 3, 64, 64)
     s = torch.randn(2, 5)
 
@@ -64,6 +74,7 @@ def test_with_stylegan3() -> None:
         bias=False,
         weight_normalization="denorm",
         weight_normalization_args={
+            "demodulate": demodulate,
             "modulation_features": 5,
             "pre_normalize": "stylegan3",
         },
@@ -73,8 +84,10 @@ def test_with_stylegan3() -> None:
 
     output_custom = block(x, s)
     styles = block.layers["weighting"].gamma_affine(s)
-    output_official = networks_stylegan3.modulated_conv2d(x, weight, styles)
+    output_official = networks_stylegan3.modulated_conv2d(
+        x, weight, styles, demodulate
+    )
 
     assert torch.allclose(
-        output_custom, output_official, rtol=1e-4, atol=1e-7
+        output_custom, output_official, rtol=1e-4, atol=5e-6
     ), f"Forward result mismatch. l1: {F.l1_loss(output_custom, output_official)}"

@@ -3,10 +3,9 @@ import shutil
 import pytest
 
 from firewood.trainer.utils import data
-from tests.helpers.utils import gen_params
 
 
-@pytest.mark.parametrize(*gen_params("name", ["mnist"]))
+@pytest.mark.parametrize("name", ["mnist"])
 def test_torchvision_train_val_test_datasets(name: str):
     (
         train_loader,
