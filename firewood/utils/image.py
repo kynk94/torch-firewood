@@ -18,7 +18,7 @@ from firewood.utils.common import (
     normalize_int_tuple,
     squared_number,
 )
-from firewood.utils.torch_op import _padding_for_functional_pad
+from firewood.utils.torch_op import padding_for_functional_pad
 
 
 def alpha_smoothing(
@@ -464,7 +464,7 @@ def blur_pad(
     Returns:
         A tensor of blurred image. (N, C, H + 2 * padding, W + 2 * padding)
     """
-    padding = _padding_for_functional_pad(2, padding)
+    padding = padding_for_functional_pad(2, padding)
     padded_image = F.pad(image, padding, mode="reflect")
     H, W = padded_image.shape[-2:]
     L, R, T, B = padding

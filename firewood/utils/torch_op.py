@@ -130,16 +130,34 @@ def clone_to_cpu_tensor(tensor: Tensor) -> Tensor:
     return tensor.detach().cpu()
 
 
-def _padding_for_functional_pad(rank: int, padding: INT) -> Tuple[int, ...]:
+def same_padding_for_functional_pad(
+    transposed: bool,
+    kernel_size: Tuple[int, ...],
+    stride: Tuple[int, ...],
+    dilation: Tuple[int, ...],
+) -> Tuple[int, ...]:
+    pad = []
+    if transposed:
+        for k, d, s in zip(kernel_size, dilation, stride):
+            div, mod = divmod((k - 1) * d + 1 - s, 2)
+            pad.extend([div + mod, div])
+    else:
+        for k, d in zip(kernel_size, dilation):
+            div, mod = divmod((k - 1) * d, 2)
+            pad.extend([div + mod, div])
+    return tuple(reversed(pad))
+
+
+def padding_for_functional_pad(rank: int, padding: INT) -> Tuple[int, ...]:
     """
     Convert padding to a tuple of length 2 * rank for `torch.nn.functional.pad`.
 
     Examples:
-        >>> _padding_for_functional_pad(2, 1)
+        >>> padding_for_functional_pad(2, 1)
         (1, 1, 1, 1)
-        >>> _padding_for_functional_pad(2, (1, 2))
+        >>> padding_for_functional_pad(2, (1, 2))
         (2, 2, 1, 1)
-        >>> _padding_for_functional_pad(2, (1, 2, 3, 4))
+        >>> padding_for_functional_pad(2, (1, 2, 3, 4))
         (3, 4, 1, 2)
     """
     if isinstance(padding, int):
