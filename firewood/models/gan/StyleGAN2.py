@@ -491,7 +491,7 @@ class Discriminator(nn.Module):
         channels_decay: float = 1.0,
         mbstd_group: int = 4,
         activation: str = "lrelu",
-        fir: NUMBER = [1, 2, 1],
+        fir: NUMBER = [1, 3, 3, 1],
         resolution: int = 1024,
         image_channels: int = 3,
         lr_equalization: bool = True,
@@ -509,23 +509,21 @@ class Discriminator(nn.Module):
         )
 
         self.layers = nn.ModuleDict()
-        self.from_images = nn.ModuleDict()
         kwargs = dict(bias=True, activation=activation)
+        in_channels = _calc_channels(
+            resolution, self.max_channels, self.channels_decay
+        )
+        self.from_image = layers.Conv2dBlock(
+            self.image_channels, in_channels, 1, 1, 0, **kwargs
+        )
         for i in range(self.n_layers - 1, -1, -1):
             resolution = 2 ** (i + 2)
-            if i == self.n_layers - 1:
-                in_channels = _calc_channels(
-                    resolution, self.max_channels, self.channels_decay
-                )
-            else:
+            if i < self.n_layers - 1:
                 in_channels = out_channels
             out_channels = _calc_channels(
                 resolution // 2, self.max_channels, self.channels_decay
             )
 
-            self.from_images[str(resolution)] = layers.Conv2dBlock(
-                self.image_channels, in_channels, 1, 1, 0, **kwargs
-            )
             if i > 0:
                 self.layers[str(resolution)] = ConvConvDownBlock(
                     in_channels,
@@ -573,7 +571,7 @@ class Discriminator(nn.Module):
         """
         resolution = input.size(-1)
 
-        output: Tensor = self.from_images[str(resolution)](input)
+        output: Tensor = self.from_image(input)
         for i in range(int(math.log2(resolution)) - 2, -1, -1):
             current_resolution = self.initial_resolution * 2**i
             output = self.layers[str(current_resolution)](output)
@@ -627,9 +625,7 @@ def main() -> None:
 
         def forward(self, input: Tensor, label: Optional[Tensor] = None) -> Tensor:  # type: ignore
             image = self.generator(input, label)
-            for _ in range(self.generator.synthesis.n_layers):
-                score = self.discriminator(image, label=label)
-                image = F.avg_pool2d(image, 2)
+            score = self.discriminator(image, label=label)
             return score
 
     summary = Summary()
