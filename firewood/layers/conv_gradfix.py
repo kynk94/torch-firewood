@@ -1,16 +1,14 @@
 import contextlib
 import functools
 import math
-import sys
 from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union, cast
 
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
-import torch.nn.grad as grad
 import torch.nn.init as init
 import torch.onnx.symbolic_helper as sym_help
-from torch import Size, Tensor
+from torch import Tensor
 from torch._C import Graph, Value
 from torch.nn.modules.utils import (
     _pair,
@@ -27,12 +25,14 @@ from firewood.common.backend import (
 )
 from firewood.common.constant import NULL_TENSOR
 from firewood.common.types import DEVICE, INT, SAME_PADDING
+from firewood.functional import grad
 from firewood.layers import initializers
 from firewood.utils import (
-    _padding_for_functional_pad,
     _pair_padding,
     _single_padding,
     _triple_padding,
+    padding_for_functional_pad,
+    same_padding_for_functional_pad,
 )
 
 # Forcefully disable computation of gradients with respect to the weights.
@@ -65,12 +65,6 @@ _CONV_CUSTOM_GRAD_CACHE: Dict[
     ],
     Type[torch.autograd.Function],
 ] = dict()
-
-_CUDNN_FLAGS = [
-    torch.backends.cudnn.benchmark,
-    torch.backends.cudnn.deterministic,
-    torch.backends.cudnn.allow_tf32,
-]
 
 
 class _GFixConvNd(nn.Module):
@@ -163,14 +157,14 @@ class _GFixConvNd(nn.Module):
         if isinstance(padding, str):
             if padding.lower() != "same":
                 raise ValueError("Only 'same' padding is supported")
-            padding = _calc_same_padding(
+            padding = same_padding_for_functional_pad(
                 transposed=self.transposed,
                 kernel_size=self.kernel_size,
                 stride=self.stride,
                 dilation=self.dilation,
             )
         else:
-            padding = _padding_for_functional_pad(self.rank, padding)
+            padding = padding_for_functional_pad(self.rank, padding)
         if len(set(padding)) == 1:
             padding = (padding[0],) * self.rank
         self.padding = padding
@@ -490,27 +484,6 @@ class GFixConvTranspose3d(_GFixConvNd):
         )
 
 
-def _calc_same_padding(
-    transposed: bool,
-    kernel_size: Tuple[int, ...],
-    stride: Tuple[int, ...],
-    dilation: Tuple[int, ...],
-) -> Tuple[int, ...]:
-    pad = []
-    if transposed:
-        for k, d, s in zip(kernel_size, dilation, stride):
-            div, mod = divmod((k - 1) * d + 1 - s, 2)
-            pad.extend([div + mod, div])
-    else:
-        for k, d in zip(kernel_size, dilation):
-            div, mod = divmod((k - 1) * d, 2)
-            pad.extend([div + mod, div])
-    padding = tuple(reversed(pad))
-    if len(set(padding)) == 1:
-        padding = (padding[0],) * len(kernel_size)
-    return padding
-
-
 def _calc_output_padding(
     input_shape: Tuple[int, ...],
     output_shape: Optional[Tuple[int, ...]] = None,
@@ -571,98 +544,6 @@ def _calc_output_padding(
     return tuple(output_padding)
 
 
-def conv_weight_cudnn(
-    input: Tensor,
-    weight_size: Union[Size, Tuple[int, ...]],
-    grad_output: Tensor,
-    stride: INT = 1,
-    padding: INT = 0,
-    dilation: INT = 1,
-    groups: int = 1,
-) -> Tensor:
-    """
-    support conv2d, conv3d
-    """
-    operation_name = "aten::cudnn_convolution_backward_weight"
-    return torch._C._jit_get_operation(operation_name)(  # type: ignore
-        weight_size,
-        grad_output,
-        input,
-        padding,
-        stride,
-        dilation,
-        groups,
-        *_CUDNN_FLAGS,
-    )
-
-
-def conv_transpose_weight_cudnn(
-    input: Tensor,
-    weight_size: Union[Size, Tuple[int, ...]],
-    grad_output: Tensor,
-    stride: INT = 1,
-    padding: INT = 0,
-    dilation: INT = 1,
-    groups: int = 1,
-) -> Tensor:
-    """
-    support conv_transpose2d, conv_transpose3d
-    """
-    operation_name = "aten::cudnn_convolution_transpose_backward_weight"
-    return torch._C._jit_get_operation(operation_name)(  # type: ignore
-        weight_size,
-        grad_output,
-        input,
-        padding,
-        stride,
-        dilation,
-        groups,
-        *_CUDNN_FLAGS,
-    )
-
-
-def conv_transpose1d_weight(
-    input: Tensor,
-    weight_size: Union[Size, Tuple[int, ...]],
-    grad_output: Tensor,
-    stride: INT = 1,
-    padding: INT = 0,
-    dilation: INT = 1,
-    groups: int = 1,
-) -> Tensor:
-    return grad.conv1d_weight(
-        grad_output, weight_size, input, stride, padding, dilation, groups
-    )
-
-
-def conv_transpose2d_weight(
-    input: Tensor,
-    weight_size: Union[Size, Tuple[int, ...]],
-    grad_output: Tensor,
-    stride: INT = 1,
-    padding: INT = 0,
-    dilation: INT = 1,
-    groups: int = 1,
-) -> Tensor:
-    return grad.conv2d_weight(
-        grad_output, weight_size, input, stride, padding, dilation, groups
-    )
-
-
-def conv_transpose3d_weight(
-    input: Tensor,
-    weight_size: Union[Size, Tuple[int, ...]],
-    grad_output: Tensor,
-    stride: INT = 1,
-    padding: INT = 0,
-    dilation: INT = 1,
-    groups: int = 1,
-) -> Tensor:
-    return grad.conv3d_weight(
-        grad_output, weight_size, input, stride, padding, dilation, groups
-    )
-
-
 def _load_operation(
     transposed: bool,
     weight_shape: Tuple[int, ...],
@@ -703,12 +584,10 @@ def _load_operation(
         key += "_transpose"
     conv_op_name = f"{key}{rank}d"
     weight_op_name = f"{conv_op_name}_weight"
-    weight_op_module = sys.modules[__name__] if transposed else grad
     if utils.is_older_torch("1.11.0") and utils.is_cuda(device) and rank > 1:
         weight_op_name = f"{key}_weight_cudnn"
-        weight_op_module = sys.modules[__name__]
     conv_operation = getattr(F, conv_op_name)
-    weight_operation = getattr(weight_op_module, weight_op_name)
+    weight_operation = getattr(grad, weight_op_name)
 
     class GFixConvNd(torch.autograd.Function):
         @staticmethod
