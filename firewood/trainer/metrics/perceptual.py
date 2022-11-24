@@ -73,12 +73,14 @@ class VGGFeatureExtractor(nn.Module):
         super().__init__()
         self.extractor = extractor.lower()
         if self.extractor in {"vgg", "vgg16"}:
-            model = TM.vgg16(pretrained=True).features
+            weights = TM.VGG16_Weights.DEFAULT
+            model = TM.vgg16(weights=weights).features
             table = VGG16_TABLE
             if targets is None:
                 targets = table["block5_conv3"]
         elif self.extractor in {"vgg19"}:
-            model = TM.vgg19(pretrained=True).features
+            weights = TM.VGG19_Weights.DEFAULT
+            model = TM.vgg19(weights=weights).features
             table = VGG19_TABLE
             if targets is None:
                 targets = table["block5_conv4"]
