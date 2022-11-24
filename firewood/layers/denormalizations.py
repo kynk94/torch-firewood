@@ -14,7 +14,7 @@ class DeNorm(nn.Module):
         self,
         num_features: int,
         normalization: str = "bn",
-        eps: float = 1e-9,
+        eps: float = 1e-8,
         **normalization_kwargs: Any,
     ) -> None:
         super().__init__()
@@ -61,7 +61,7 @@ class AdaptiveNorm(DeNorm):
         use_projection: bool = False,
         use_separate_projection: bool = False,
         modulation_features_shape: Optional[Tuple[int, ...]] = None,
-        eps: float = 1e-9,
+        eps: float = 1e-8,
         weight_initializer: str = "kaiming_uniform",
         bias_initializer: str = "zeros",
     ) -> None:
@@ -171,7 +171,7 @@ class SpatialAdaptiveNorm(DeNorm):
         normalization: str = "sync_bn",
         normalization_kwargs: Optional[dict] = None,
         activation: str = "relu",
-        eps: float = 1e-9,
+        eps: float = 1e-8,
         weight_initializer: str = "kaiming_uniform",
         bias_initializer: str = "zeros",
     ) -> None:

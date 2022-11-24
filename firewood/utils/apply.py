@@ -3,6 +3,7 @@ from typing import Any, Type
 import torch.nn as nn
 
 from firewood.common.collector import Collector
+from firewood.hooks.weight_denormalizations import WeightDeNorm
 from firewood.layers.activations import (
     BiasedActivation,
     normalize_activation_name,
@@ -26,6 +27,14 @@ def set_all_conv_force_default(value: bool) -> None:
     for layer in Collector.layers():
         if isinstance(layer, _GFixConvNd):
             layer.force_default = value
+
+
+def set_all_weight_denorm_force_default(value: bool) -> None:
+    if not isinstance(value, bool):
+        raise TypeError(f"Expected bool, got {type(value)}")
+    for hook in Collector.hooks():
+        if isinstance(hook, WeightDeNorm):
+            hook.force_default = value
 
 
 def set_instance_norm_unbiased(module: nn.Module, value: bool) -> nn.Module:

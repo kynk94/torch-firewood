@@ -34,7 +34,7 @@ def get(
 def get(
     normalization: Optional[Union[nn.Module, str]],
     num_features: int,
-    eps: float = 1e-9,
+    eps: float = 1e-8,
     unbiased: bool = False,
     **kwargs: Any,
 ) -> Optional[nn.Module]:
@@ -83,7 +83,7 @@ class BatchNorm(_BatchNorm):
     def __init__(
         self,
         num_features: int,
-        eps: float = 1e-9,
+        eps: float = 1e-8,
         momentum: float = 0.1,
         affine: bool = True,
         track_running_stats: bool = True,
@@ -107,7 +107,7 @@ class GroupNorm(nn.GroupNorm):
         self,
         num_channels: int,
         num_groups: Optional[int] = None,
-        eps: float = 1e-9,
+        eps: float = 1e-8,
         affine: bool = True,
     ) -> None:
         if num_groups is None:
@@ -132,7 +132,7 @@ class InstanceNorm(_InstanceNorm):
     def __init__(
         self,
         num_features: int,
-        eps: float = 1e-9,
+        eps: float = 1e-8,
         momentum: float = 0.1,
         unbiased: bool = False,
         affine: bool = False,
@@ -177,7 +177,7 @@ class InstanceNorm(_InstanceNorm):
 
 
 class PixelNorm(nn.Module):
-    def __init__(self, eps: float = 1e-9) -> None:
+    def __init__(self, eps: float = 1e-8) -> None:
         super().__init__()
         self.eps = eps
 

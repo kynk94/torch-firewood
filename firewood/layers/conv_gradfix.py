@@ -1,4 +1,3 @@
-import contextlib
 import functools
 import math
 from typing import Any, Callable, Dict, List, Optional, Tuple, Type, Union, cast
@@ -19,10 +18,7 @@ from torch.nn.modules.utils import (
 from torch.nn.parameter import Parameter
 
 from firewood import utils
-from firewood.common.backend import (
-    set_conv_weight_gradients_disabled,
-    weight_gradients_disabled,
-)
+from firewood.common.backend import weight_grad_disabled
 from firewood.common.constant import NULL_TENSOR
 from firewood.common.types import DEVICE, INT, SAME_PADDING
 from firewood.functional import grad
@@ -34,23 +30,6 @@ from firewood.utils import (
     padding_for_functional_pad,
     same_padding_for_functional_pad,
 )
-
-# Forcefully disable computation of gradients with respect to the weights.
-#
-# If True, the gradients of weight will be None, even outside the
-# no_weight_gradients_in_gfix_conv context. Otherwise, the gradients of weight
-# will be None only in the no_weight_gradients_in_gfix_conv context.
-#
-# The context is used by some regularization algorithms like path-length reg.
-
-
-@contextlib.contextmanager
-def no_weight_gradients_in_gfix_conv() -> Any:
-    old = weight_gradients_disabled()
-    set_conv_weight_gradients_disabled(True)
-    yield
-    set_conv_weight_gradients_disabled(old)
-
 
 _CONV_CUSTOM_GRAD_CACHE: Dict[
     Tuple[
@@ -665,7 +644,7 @@ def _load_operation(
                         f"(input: {input.shape}, grad_input: {grad_input.shape})"
                     )
 
-            if ctx.needs_input_grad[1] and not weight_gradients_disabled():
+            if ctx.needs_input_grad[1] and not weight_grad_disabled():
                 grad_weight = GFixConvNdGradWeight.apply(grad_output, input)
                 if grad_weight.shape != weight_shape:
                     raise ValueError(
