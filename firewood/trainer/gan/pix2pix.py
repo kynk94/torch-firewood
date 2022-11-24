@@ -13,8 +13,7 @@ from torchvision import transforms
 from firewood.common.backend import set_runtime_build
 from firewood.models.gan.pix2pix import Generator, PatchGAN
 from firewood.trainer.callbacks import I2ISampler, ModelCheckpoint
-from firewood.trainer.losses import gan_loss
-from firewood.trainer.metrics import FrechetInceptionDistance
+from firewood.trainer.metrics import FrechetInceptionDistance, gan_loss
 from firewood.trainer.utils import find_checkpoint
 from firewood.trainer.utils.data import (
     PairedImageFolder,

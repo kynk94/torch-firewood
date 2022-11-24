@@ -14,8 +14,7 @@ from firewood.trainer.callbacks import (
     LatentImageSampler,
     ModelCheckpoint,
 )
-from firewood.trainer.losses import gan_loss
-from firewood.trainer.metrics import FrechetInceptionDistance
+from firewood.trainer.metrics import FrechetInceptionDistance, gan_loss
 from firewood.trainer.utils.data import (
     get_dataloaders,
     get_train_val_test_datasets,
