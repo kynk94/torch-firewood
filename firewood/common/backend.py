@@ -1,13 +1,14 @@
 import os
 import random
-from typing import Optional
+from typing import Any, Optional
 
 import numpy as np
 import torch
+from torch.autograd.grad_mode import _DecoratorContextManager
 
 torch.backends.cudnn.benchmark = True
 _lr_equalization = False
-_weight_gradients_disabled = False
+_weight_grad_disabled = False
 _runtime_build = False
 _seed: Optional[int] = None
 
@@ -16,24 +17,49 @@ def lr_equalization() -> bool:
     return _lr_equalization
 
 
-def set_lr_equalization(lr_equalization: bool = False) -> bool:
-    if not isinstance(lr_equalization, bool):
+def set_lr_equalization(value: bool = False) -> bool:
+    if not isinstance(value, bool):
         raise TypeError("lr_equalization must be bool")
     global _lr_equalization
-    _lr_equalization = lr_equalization
+    _lr_equalization = value
     return _lr_equalization
 
 
-def weight_gradients_disabled() -> bool:
-    return _weight_gradients_disabled
+def weight_grad_disabled() -> bool:
+    return _weight_grad_disabled
 
 
-def set_conv_weight_gradients_disabled(disable_weight_gradients: bool) -> bool:
-    if not isinstance(disable_weight_gradients, bool):
-        raise TypeError("disable_weight_gradients must be bool")
-    global _weight_gradients_disabled
-    _weight_gradients_disabled = disable_weight_gradients
-    return _weight_gradients_disabled
+def set_weight_grad_disabled(value: bool) -> bool:
+    if not isinstance(value, bool):
+        raise TypeError("weight_grad_disabled must be bool")
+    global _weight_grad_disabled
+    _weight_grad_disabled = value
+    return _weight_grad_disabled
+
+
+class no_weight_grad_in_gfix_conv(_DecoratorContextManager):
+    """
+    Forcefully disable computation of gradients with respect to the weights of
+    GFixConvNd layers.
+
+    If `backend.set_weight_grad_disabled(True)`, the gradients of weight will be
+    `None`, even outside the `no_weight_grad_in_gfix_conv` context. Otherwise,
+    the gradients of weight will be `None` only entering the context.
+
+    The context is used by some regularization algorithms like path-length reg.
+    """
+
+    def __init__(self) -> None:
+        if not torch._jit_internal.is_scripting():
+            super().__init__()
+        self.prev = False
+
+    def __enter__(self) -> None:
+        self.prev = weight_grad_disabled()
+        set_weight_grad_disabled(True)
+
+    def __exit__(self, exc_type: Any, exc_value: Any, traceback: Any) -> None:
+        set_weight_grad_disabled(self.prev)
 
 
 def runtime_build() -> bool:
