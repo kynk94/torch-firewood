@@ -19,6 +19,7 @@ from torch import Tensor
 from torch.nn import Parameter
 
 from firewood import utils
+from firewood.hooks.hook import _Hook
 
 _NEED_RECURSIVE = {
     "AdaptiveNorm",
@@ -39,7 +40,7 @@ _EXCLUDE_PATTERN = {
 }
 
 
-class _LREqualizer:
+class _LREqualizer(_Hook):
     def __init__(self, name: str) -> None:
         self.call_name = self.name = name
 

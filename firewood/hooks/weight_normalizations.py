@@ -12,7 +12,7 @@ def get(
     normalization: str,
     n_power_iterations: int = 1,
     demodulate: bool = True,
-    eps: float = 1e-9,
+    eps: float = 1e-8,
     **kwargs: Any,
 ) -> Optional[Callable[..., nn.Module]]:
     if normalization is None:
