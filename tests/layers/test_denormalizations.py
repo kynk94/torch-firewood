@@ -8,7 +8,7 @@ from firewood.layers.linear import Linear
 
 @pytest.mark.parametrize("unbiased", (True, False))
 def test_adain(unbiased: bool):
-    eps = 1e-9
+    eps = 1e-8
     B = 2
     num_features = 3
     x_embedding_size = 10
@@ -40,7 +40,7 @@ def test_adain(unbiased: bool):
 
 @pytest.mark.parametrize("unbiased", (True, False))
 def test_adain_projection(unbiased: bool):
-    eps = 1e-9
+    eps = 1e-8
     B = 2
     num_features = 3
     modulation_features = 5
