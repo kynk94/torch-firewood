@@ -33,7 +33,7 @@ All layers are compatible with official pytorch `nn.Module` and support `ddp` st
   [:fire:Trainer](https://github.com/kynk94/torch-firewood/blob/main/firewood/trainer/gan/StyleGAN.py)
 * [x] StyleGAN2
   [:evergreen_tree:Model](https://github.com/kynk94/torch-firewood/blob/main/firewood/models/gan/StyleGAN2.py)
-  [:fire:Trainer](https://github.com/kynk94/torch-firewood/blob/main/firewood/trainer/gan/StyleGAN2.py
+  [:fire:Trainer](https://github.com/kynk94/torch-firewood/blob/main/firewood/trainer/gan/StyleGAN2.py)
 
 ### Semantic Segmentation
 
