@@ -41,7 +41,7 @@ def get(
         if modulation_features is None:
             raise ValueError("modulation_features must be specified.")
         pre_normalize = utils.search_kwargs(
-            kwargs, ("pre_normalize", "pn"), "stylegan2", pop=True
+            kwargs, ("pre_normalize", "pn"), "maximum", pop=True
         )
         return functools.partial(
             weight_denorm,

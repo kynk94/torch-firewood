@@ -184,13 +184,10 @@ class WeightDeNorm(_Hook):
         gamma: Tensor = module.get_submodule("gamma_affine")(modulation_input)
 
         if self.demodulate:
-            if (
-                self.pre_normalize == "stylegan2"
-                and input.dtype == torch.float16
-            ):
-                weight, gamma = _pre_normalize_stylegan2(weight, gamma)
-            if self.pre_normalize == "stylegan3":
-                weight, gamma = _pre_normalize_stylegan3(weight, gamma)
+            if self.pre_normalize == "maximum" and input.dtype == torch.float16:
+                weight, gamma = _pre_normalize_maximum(weight, gamma)
+            if self.pre_normalize == "moment":
+                weight, gamma = _pre_normalize_moment(weight, gamma)
 
         batch_size = input.size(0)
         groups_orig = getattr(module, "groups_orig", None)
@@ -223,20 +220,21 @@ class WeightDeNorm(_Hook):
 
 def _normalize_pre_normalize_arg(
     pre_normalize: Optional[str] = None,
-) -> Optional[Literal["stylegan2", "stylegan3"]]:
+) -> Optional[Literal["maximum", "moment"]]:
     if pre_normalize is None:
         return None
-    if pre_normalize.endswith("2"):
-        return "stylegan2"
-    if pre_normalize.endswith("3") or pre_normalize in {
-        "af",
-        "alias_free",
-    }:
-        return "stylegan3"
+    if pre_normalize.endswith("2") or pre_normalize.startswith("maximum"):
+        return "maximum"
+    if (
+        pre_normalize.endswith("3")
+        or pre_normalize in {"af", "alias_free"}
+        or pre_normalize.startswith("moment")
+    ):
+        return "moment"
     raise ValueError(f"Unknown pre_normalize: {pre_normalize}")
 
 
-def _pre_normalize_stylegan2(
+def _pre_normalize_maximum(
     weight: Tensor, gamma: Tensor
 ) -> Tuple[Tensor, Tensor]:
     weight = maximum_normalization(weight, dim=tuple(range(1, weight.ndim)))
@@ -246,7 +244,7 @@ def _pre_normalize_stylegan2(
     return weight, gamma
 
 
-def _pre_normalize_stylegan3(
+def _pre_normalize_moment(
     weight: Tensor, gamma: Tensor
 ) -> Tuple[Tensor, Tensor]:
     weight = moment_normalization(weight, dim=tuple(range(1, weight.ndim)))
