@@ -382,6 +382,8 @@ class SynthesisNetwork(nn.Module):
 
 
 # ------------------------------------------------------------------------------
+
+
 class Generator(nn.Module):
     def __init__(
         self,

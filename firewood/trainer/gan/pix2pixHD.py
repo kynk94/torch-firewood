@@ -17,8 +17,11 @@ from firewood.models.gan.pix2pixHD import (
     MultiScalePatchGAN,
 )
 from firewood.trainer.callbacks import I2ISampler, ModelCheckpoint
-from firewood.trainer.losses import PerceptualLoss, lsgan_loss
-from firewood.trainer.metrics import FrechetInceptionDistance
+from firewood.trainer.metrics import (
+    FrechetInceptionDistance,
+    PerceptualLoss,
+    lsgan_loss,
+)
 from firewood.trainer.utils import extract_state_dict, find_checkpoint
 from firewood.trainer.utils.data import (
     PairedImageFolder,

@@ -37,7 +37,6 @@ from .conv_gradfix import (
     GFixConvTranspose1d,
     GFixConvTranspose2d,
     GFixConvTranspose3d,
-    no_weight_gradients_in_gfix_conv,
 )
 from .conv_separable import (
     DepthSepConv1d,

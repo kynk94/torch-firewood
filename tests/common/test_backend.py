@@ -17,16 +17,16 @@ def test_lr_equalization_failed() -> None:
 
 
 def test_conv_weight_gradients_disabled() -> None:
-    assert backend.weight_gradients_disabled() is False
-    backend.set_conv_weight_gradients_disabled(True)
-    assert backend.weight_gradients_disabled() is True
-    backend.set_conv_weight_gradients_disabled(False)
-    assert backend.weight_gradients_disabled() is False
+    assert backend.weight_grad_disabled() is False
+    backend.set_weight_grad_disabled(True)
+    assert backend.weight_grad_disabled() is True
+    backend.set_weight_grad_disabled(False)
+    assert backend.weight_grad_disabled() is False
 
 
 @pytest.mark.xfail(raises=TypeError)
 def test_conv_weight_gradients_disabled_failed() -> None:
-    backend.set_conv_weight_gradients_disabled("invalid")
+    backend.set_weight_grad_disabled("invalid")
 
 
 def test_runtime_build() -> None:

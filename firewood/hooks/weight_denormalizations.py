@@ -28,11 +28,14 @@ from firewood.functional.normalizations import (
     maximum_normalization,
     moment_normalization,
 )
+from firewood.hooks.hook import _Hook
 from firewood.layers.block import Block
 from firewood.layers.linear import Linear
 
+FORCE_DEFAULT = False
 
-class WeightDeNormOutput:
+
+class WeightDeNormOutput(_Hook):
     def __init__(self, out_features: int, name: str = "bias") -> None:
         self.out_features = out_features
         self.param_name = self.name = name
@@ -65,6 +68,7 @@ class WeightDeNormOutput:
     ) -> Tensor:
         if self.demodulation_coeff is not None:
             output = output * self.demodulation_coeff
+            self.demodulation_coeff = None
         output = output.view(-1, self.out_features, *output.shape[2:])
 
         bias: Optional[Tensor] = getattr(self, self.name, None)
@@ -77,7 +81,7 @@ class WeightDeNormOutput:
         return output + bias
 
 
-class WeightDeNorm:
+class WeightDeNorm(_Hook):
     """
     Weight demodulation operation introduced in StyleGAN2.
 
@@ -87,13 +91,14 @@ class WeightDeNorm:
     """
 
     output_hook: WeightDeNormOutput
+    force_default = FORCE_DEFAULT
 
     def __init__(
         self,
         name: str = "weight",
         demodulate: bool = True,
         pre_normalize: Optional[str] = None,
-        eps: float = 1e-9,
+        eps: float = 1e-8,
     ):
         self.param_name = self.name = name
         self.demodulate = demodulate
@@ -107,7 +112,7 @@ class WeightDeNorm:
         name: str = "weight",
         demodulate: bool = True,
         pre_normalize: Optional[str] = None,
-        eps: float = 1e-9,
+        eps: float = 1e-8,
     ) -> "WeightDeNorm":
         fn = WeightDeNorm(name, demodulate, pre_normalize, eps)
         module.register_forward_pre_hook(fn)  # type: ignore
@@ -146,7 +151,7 @@ class WeightDeNorm:
         self.output_hook.remove(module)
 
     def __weight_denorm_fused(
-        self, module: nn.Module, weight: Tensor, gamma: Tensor, batch_size: int
+        self, module: nn.Module, weight: Tensor, gamma: Tensor
     ) -> None:
         modulated_weight = _weight_modulation(weight, gamma)
         if self.demodulate:
@@ -154,7 +159,6 @@ class WeightDeNorm:
                 modulated_weight, fused=True, eps=self.eps
             )
             modulated_weight = modulated_weight * demodulation_coeff
-        utils.keep_setattr(module, "groups", batch_size)
         setattr(module, self.name, modulated_weight.flatten(0, 1))
 
     def __weight_denorm_not_fused(
@@ -167,7 +171,8 @@ class WeightDeNorm:
             )
             # coeff should be multiplied to the output of the module
             setattr(self.output_hook, "demodulation_coeff", demodulation_coeff)
-        setattr(module, self.name, weight)
+        # make parameter to tensor by indexing
+        setattr(module, self.name, weight[:])
 
     def __call__(
         self, module: nn.Module, inputs: Tuple[Tensor, Tensor]
@@ -179,18 +184,27 @@ class WeightDeNorm:
         gamma: Tensor = module.get_submodule("gamma_affine")(modulation_input)
 
         if self.demodulate:
-            if (
-                self.pre_normalize == "stylegan2"
-                and input.dtype == torch.float16
-            ):
-                weight, gamma = _pre_normalize_stylegan2(weight, gamma)
-            if self.pre_normalize == "stylegan3":
-                weight, gamma = _pre_normalize_stylegan3(weight, gamma)
+            if self.pre_normalize == "maximum" and input.dtype == torch.float16:
+                weight, gamma = _pre_normalize_maximum(weight, gamma)
+            if self.pre_normalize == "moment":
+                weight, gamma = _pre_normalize_moment(weight, gamma)
 
-        if getattr(module, "groups_orig", None) == 1:
-            self.__weight_denorm_fused(module, weight, gamma, input.size(0))
+        batch_size = input.size(0)
+        groups_orig = getattr(module, "groups_orig", None)
+        # During training, StyleGAN2 uses path length regularization.
+        # And it does not work with fused weight demodulation.
+        if (
+            not module.training
+            and batch_size != 1
+            and groups_orig == 1
+            and not self.force_default
+        ):
+            setattr(module, "groups", batch_size)
+            self.__weight_denorm_fused(module, weight, gamma)
             input = input.view(1, -1, *input.shape[2:])
         else:
+            if groups_orig is not None:
+                setattr(module, "groups", groups_orig)
             self.__weight_denorm_not_fused(module, weight, gamma)
             input = input * utils.unsqueeze_view(gamma, -1, input.ndim - 2)
 
@@ -206,28 +220,31 @@ class WeightDeNorm:
 
 def _normalize_pre_normalize_arg(
     pre_normalize: Optional[str] = None,
-) -> Optional[Literal["stylegan2", "stylegan3"]]:
+) -> Optional[Literal["maximum", "moment"]]:
     if pre_normalize is None:
         return None
-    if pre_normalize.endswith("2"):
-        return "stylegan2"
-    if pre_normalize.endswith("3") or pre_normalize in {
-        "af",
-        "alias_free",
-    }:
-        return "stylegan3"
+    if pre_normalize.endswith("2") or pre_normalize.startswith("maximum"):
+        return "maximum"
+    if (
+        pre_normalize.endswith("3")
+        or pre_normalize in {"af", "alias_free"}
+        or pre_normalize.startswith("moment")
+    ):
+        return "moment"
     raise ValueError(f"Unknown pre_normalize: {pre_normalize}")
 
 
-def _pre_normalize_stylegan2(
+def _pre_normalize_maximum(
     weight: Tensor, gamma: Tensor
 ) -> Tuple[Tensor, Tensor]:
     weight = maximum_normalization(weight, dim=tuple(range(1, weight.ndim)))
-    gamma = maximum_normalization(gamma, dim=1, use_scaling=False)
+    # Don't know why, but gamma is not scaled by number of elements in the
+    # official implementation.
+    gamma = maximum_normalization(gamma, dim=1, mean=False)
     return weight, gamma
 
 
-def _pre_normalize_stylegan3(
+def _pre_normalize_moment(
     weight: Tensor, gamma: Tensor
 ) -> Tuple[Tensor, Tensor]:
     weight = moment_normalization(weight, dim=tuple(range(1, weight.ndim)))
@@ -249,7 +266,7 @@ def _weight_modulation(weight: Tensor, gamma: Tensor) -> Tensor:
 
 
 def _calc_demodulation_coeff(
-    modulated_weight: Tensor, fused: bool = True, eps: float = 1e-9
+    modulated_weight: Tensor, fused: bool = True, eps: float = 1e-8
 ) -> Tensor:
     """
     modulated_weight:
@@ -273,7 +290,7 @@ def weight_denorm(
     name: str = "weight",
     demodulate: bool = True,
     pre_normalize: str = "stylegan2",
-    eps: float = 1e-9,
+    eps: float = 1e-8,
 ) -> nn.Module:
     if isinstance(module, Block):
         return weight_denorm(
@@ -304,7 +321,7 @@ def weight_denorm_to_conv(
     name: str = "weight",
     demodulate: bool = True,
     pre_normalize: str = "stylegan2",
-    eps: float = 1e-9,
+    eps: float = 1e-8,
 ) -> nn.Module:
     for submodule in module.modules():
         module_name = utils.get_name(submodule)
