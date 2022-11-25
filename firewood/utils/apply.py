@@ -3,12 +3,9 @@ from typing import Any, Type
 import torch.nn as nn
 
 from firewood.common.collector import Collector
-from firewood.hooks.weight_denormalizations import WeightDeNorm
-from firewood.layers.activations import (
-    BiasedActivation,
-    normalize_activation_name,
-)
-from firewood.layers.conv_gradfix import _GFixConvNd
+from firewood.hooks import weight_denormalizations
+from firewood.layers import biased_activations, conv_gradfix
+from firewood.layers.activations import normalize_activation_name
 from firewood.layers.denormalizations import AdaptiveNorm
 from firewood.layers.normalizations import InstanceNorm
 
@@ -24,16 +21,18 @@ def set_all_module_attr(cls: Type[nn.Module], attr: str, value: Any) -> None:
 def set_all_conv_force_default(value: bool) -> None:
     if not isinstance(value, bool):
         raise TypeError(f"Expected bool, got {type(value)}")
+    conv_gradfix.FORCE_DEFAULT = value
     for layer in Collector.layers():
-        if isinstance(layer, _GFixConvNd):
+        if isinstance(layer, conv_gradfix._GFixConvNd):
             layer.force_default = value
 
 
 def set_all_weight_denorm_force_default(value: bool) -> None:
     if not isinstance(value, bool):
         raise TypeError(f"Expected bool, got {type(value)}")
+    weight_denormalizations.FORCE_DEFAULT = value
     for hook in Collector.hooks():
-        if isinstance(hook, WeightDeNorm):
+        if isinstance(hook, weight_denormalizations.WeightDeNorm):
             hook.force_default = value
 
 
@@ -60,7 +59,7 @@ def set_biased_activation_force_default(
     if not isinstance(value, bool):
         raise TypeError(f"Expected bool, got {type(value)}")
     for submodule in module.modules():
-        if isinstance(submodule, BiasedActivation):
+        if isinstance(submodule, biased_activations.BiasedActivation):
             submodule.force_default = value
     return module
 
@@ -68,8 +67,9 @@ def set_biased_activation_force_default(
 def set_all_biased_activation_force_default(value: bool) -> None:
     if not isinstance(value, bool):
         raise TypeError(f"Expected bool, got {type(value)}")
+    biased_activations.FORCE_DEFAULT = value
     for layer in Collector.layers():
-        if isinstance(layer, BiasedActivation):
+        if isinstance(layer, biased_activations.BiasedActivation):
             layer.force_default = value
 
 
@@ -81,7 +81,7 @@ def set_all_biased_activation_gain(activation: str, value: float) -> None:
     activation = normalize_activation_name(activation)
     for layer in Collector.layers():
         if (
-            isinstance(layer, BiasedActivation)
+            isinstance(layer, biased_activations.BiasedActivation)
             and layer.activation == activation
         ):
             layer.gain = value

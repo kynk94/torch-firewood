@@ -31,6 +31,7 @@ from firewood.utils import (
     same_padding_for_functional_pad,
 )
 
+FORCE_DEFAULT = False
 _CONV_CUSTOM_GRAD_CACHE: Dict[
     Tuple[
         bool,  # transposed
@@ -56,7 +57,7 @@ class _GFixConvNd(nn.Module):
         (int, int, int, int): up, bottom, left, right
     """
 
-    force_default = False
+    force_default = FORCE_DEFAULT
 
     def __init__(
         self,

@@ -32,6 +32,8 @@ from firewood.hooks.hook import _Hook
 from firewood.layers.block import Block
 from firewood.layers.linear import Linear
 
+FORCE_DEFAULT = False
+
 
 class WeightDeNormOutput(_Hook):
     def __init__(self, out_features: int, name: str = "bias") -> None:
@@ -89,7 +91,7 @@ class WeightDeNorm(_Hook):
     """
 
     output_hook: WeightDeNormOutput
-    force_default = False
+    force_default = FORCE_DEFAULT
 
     def __init__(
         self,

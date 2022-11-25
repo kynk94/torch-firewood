@@ -15,6 +15,8 @@ from firewood.common.types import DEVICE, INT, NUMBER
 from firewood.functional.upfirdn import _parse_padding, upfirdnNd
 from firewood.utils.extensions import CUDAExtension
 
+FORCE_DEFAULT = False
+
 
 def get_upfirdn_layer(
     rank: int,
@@ -103,7 +105,7 @@ class _UpFirDnNd(nn.Module):
         if all(u == 1 for u in self.up) and all(d == 1 for d in self.down):
             self.force_default = True
         else:
-            self.force_default = False
+            self.force_default = FORCE_DEFAULT
         self.default_operation = functools.partial(
             upfirdnNd,
             gain=self.gain,

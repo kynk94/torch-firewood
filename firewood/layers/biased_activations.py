@@ -12,6 +12,8 @@ from firewood.common.types import DEVICE
 from firewood.layers import activations
 from firewood.utils.extensions import CUDAExtension
 
+FORCE_DEFAULT = False
+
 
 def _linear(x: Tensor, *args: Any, **kwargs: Any) -> Tensor:
     return x
@@ -140,6 +142,8 @@ ACTIVATIONS: Dict[str, ACTIVATION] = {
 
 
 class BiasedActivation(nn.Module):
+    force_default = FORCE_DEFAULT
+
     def __init__(
         self,
         activation: str,
@@ -169,7 +173,6 @@ class BiasedActivation(nn.Module):
         self.gain = gain
         self.clamp = clamp if clamp is not None else -1
 
-        self.force_default = False
         self.register_parameter("bias", None)
         self.to(device=self.device)
 
