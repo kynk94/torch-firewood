@@ -5,7 +5,6 @@ from torch import Tensor
 from torchmetrics import Metric
 
 from firewood.common.backend import no_weight_grad_in_gfix_conv
-from firewood.functional.normalizations import moment_normalization
 from firewood.utils import get_nested_first
 
 
@@ -47,11 +46,10 @@ class PathLengthPenalty(Metric):
         grad = torch.autograd.grad(
             outputs=(images * noise).sum(), inputs=styles, create_graph=True
         )[0]
-        path_length = moment_normalization(
-            grad, ord=2, dim=range(1, grad.ndim), mean=False, eps=self.eps
-        )
-        if grad.ndim == 3:
-            path_length = path_length / grad.size(1) ** 0.5
+        if grad.ndim == 2:
+            path_length = grad.square().mean(-1).sqrt()
+        else:
+            path_length = grad.square().sum(-1).mean(-1).sqrt()
         self.path_length = path_length
         path_length_avg = self.path_length_avg.lerp(
             path_length.mean(), 1.0 - self.decay
@@ -59,7 +57,7 @@ class PathLengthPenalty(Metric):
         self.path_length_avg.copy_(path_length_avg.detach())
 
     def compute(self) -> Tensor:
-        return (self.path_length - self.path_length_avg).square()
+        return (self.path_length - self.path_length_avg).square().mean()
 
     def reset(self) -> None:
         path_length_avg = self.path_length_avg.detach()

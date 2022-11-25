@@ -388,11 +388,11 @@ class Generator(nn.Module):
             style_mixing_probability, 0.0, 1.0
         )
 
-    def forward(
+    def make_style(
         self,
         input: Tensor,
         label: Optional[Tensor] = None,
-        truncation: Optional[float] = 0.5,
+        truncation: Optional[float] = None,
         resolution: Optional[int] = None,
     ) -> Tensor:
         if resolution is None:
@@ -414,10 +414,10 @@ class Generator(nn.Module):
             mixing_style = mixing_style.unsqueeze(1).repeat(
                 1, self.synthesis.n_layers * 2, 1
             )
-            current_index = 2 + 2 * math.log2(
-                resolution / self.synthesis.initial_resolution
+            current_index = 2 + 2 * int(
+                math.log2(resolution / self.synthesis.initial_resolution)
             )
-            mixing_cutoff = random.randint(1, int(current_index))
+            mixing_cutoff = random.randint(1, current_index)
             style = torch.where(
                 layer_index < mixing_cutoff, style, mixing_style
             )
@@ -428,6 +428,18 @@ class Generator(nn.Module):
                 self.mapping.style_avg.lerp(style.float(), truncation),
                 style,
             )
+        return style
+
+    def forward(
+        self,
+        input: Tensor,
+        label: Optional[Tensor] = None,
+        truncation: Optional[float] = 0.5,
+        resolution: Optional[int] = None,
+    ) -> Tensor:
+        if resolution is None:
+            resolution = self.synthesis.resolution
+        style = self.make_style(input, label, truncation, resolution)
         image = self.synthesis(style, resolution)
         return image
 

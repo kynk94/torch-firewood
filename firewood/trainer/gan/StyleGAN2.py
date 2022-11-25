@@ -20,6 +20,7 @@ from firewood.trainer.callbacks import (
 )
 from firewood.trainer.metrics import (
     FrechetInceptionDistance,
+    PathLengthPenalty,
     logistic_nonsaturating_loss,
     simple_gradient_penalty,
 )
@@ -54,6 +55,7 @@ class StyleGAN(pl.LightningModule):
         learning_rate: float = 2e-4,
         r1_gamma: float = 10.0,
         r2_gamma: float = 0.0,
+        pl_penalty_gamma: float = 2.0,
         g_reg_interval: int = 4,
         d_reg_interval: int = 16,
     ):
@@ -89,6 +91,7 @@ class StyleGAN(pl.LightningModule):
 
         # metrics
         self.fid = FrechetInceptionDistance()
+        self.pl = PathLengthPenalty()
 
     def forward(
         self,
@@ -99,7 +102,6 @@ class StyleGAN(pl.LightningModule):
         return self.generator(
             input,
             truncation=truncation or self.hparams.truncation,
-            alpha=1.0,
             resolution=resolution,
         )
 
@@ -111,16 +113,29 @@ class StyleGAN(pl.LightningModule):
     def generator_step(
         self,
         input: Tensor,
-        truncation: float = 0.7,
+        truncation: float = 0.5,
     ) -> Dict[str, Tensor]:
         latent = self.generate_latent(input.size(0))
         generated_image: Tensor = self.generator(latent, truncation=truncation)
         score_fake: Tensor = self.discriminator(generated_image)
         loss = logistic_nonsaturating_loss(score_fake, True)
-        return {"loss/gen": loss}
+        log_dict = {"loss/gen": loss}
+        if (
+            (self.global_step // 2) % self.hparams.g_reg_interval == 0
+            and self.hparams.pl_penalty_gamma > 0
+        ):
+            batch_size = max(input.size(0) // 2, 1)
+            latent = self.generate_latent(batch_size)
+            style = self.generator.make_style(latent, truncation=truncation)
+            generated_image = self.generator.synthesis(style)
+            pl_penalty = self.pl(style, generated_image)
+            pl_penalty *= self.hparams.pl_penalty_gamma
+            loss += pl_penalty
+            log_dict.update({"loss/gen_pl_penalty": pl_penalty})
+        return log_dict
 
     def discriminator_step(
-        self, input: Tensor, truncation: float = 0.7
+        self, input: Tensor, truncation: float = 0.5
     ) -> Dict[str, Tensor]:
         latent = self.generate_latent(input.size(0))
         with torch.no_grad():
@@ -137,16 +152,19 @@ class StyleGAN(pl.LightningModule):
         loss = loss_real + loss_fake
 
         log_dict = dict()
-        if self.hparams.r1_gamma != 0.0:
-            r1_penalty = simple_gradient_penalty(score_real, input)
-            r1_penalty *= self.hparams.r1_gamma / 2
-            loss += r1_penalty
-            log_dict.update({"loss/dis_r1_penalty": r1_penalty})
-        if self.hparams.r2_gamma != 0.0:
-            r2_penalty = simple_gradient_penalty(score_fake, generated_image)
-            r2_penalty *= self.hparams.r2_gamma / 2
-            loss += r2_penalty
-            log_dict.update({"loss/dis_r2_penalty": r2_penalty})
+        if (self.global_step // 2) % self.hparams.d_reg_interval == 0:
+            if self.hparams.r1_gamma != 0.0:
+                r1_penalty = simple_gradient_penalty(score_real, input)
+                r1_penalty *= self.hparams.r1_gamma / 2
+                loss += r1_penalty
+                log_dict.update({"loss/dis_r1_penalty": r1_penalty})
+            if self.hparams.r2_gamma != 0.0:
+                r2_penalty = simple_gradient_penalty(
+                    score_fake, generated_image
+                )
+                r2_penalty *= self.hparams.r2_gamma / 2
+                loss += r2_penalty
+                log_dict.update({"loss/dis_r2_penalty": r2_penalty})
 
         log_dict.update(
             {
@@ -189,18 +207,13 @@ class StyleGAN(pl.LightningModule):
         self, batch: Tensor, batch_idx: int
     ) -> Dict[str, Tensor]:
         real_images, _ = batch
-        if self.trainer.sanity_checking:
-            resolution = self.hparams.resolution
-            real_images = real_images[: self.calculate_batch_size(resolution)]
-        else:
-            resolution = self.get_alpha_resolution()[1]
         real_images = get_maximum_multiple_batch(
             input=real_images, divisor=self.hparams.mbstd_group
         )
 
         latent = self.generate_latent(real_images.size(0))
         generated_image: Tensor = self.generator(
-            latent, truncation=0.7, resolution=resolution
+            latent, truncation=self.hparams.truncation
         )
         score_fake: Tensor = self.discriminator(generated_image)
         score_real: Tensor = self.discriminator(real_images)
@@ -359,6 +372,7 @@ def main():
         learning_rate=args["learning_rate"],
         r1_gamma=10.0,
         r2_gamma=0.0,
+        pl_penalty_gamma=2.0,
         g_reg_interval=4,
         d_reg_interval=16,
     )
@@ -382,6 +396,7 @@ def main():
         check_val_every_n_epoch=5,
         callbacks=callbacks,
         strategy="ddp" if gpus > 1 else None,
+        log_every_n_steps=10,
     )
     trainer.logger._default_hp_metric = False
 
