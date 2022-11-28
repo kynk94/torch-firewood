@@ -60,8 +60,13 @@ def test_with_stylegan2(demodulate: bool, dtype: torch.dtype) -> None:
         x, weight, styles, demodulate=demodulate, flip_weight=True
     )
 
+    rtol = 1e-6
+    if dtype == torch.float16:
+        atol = 5e-3
+    else:
+        atol = 5e-7
     assert torch.allclose(
-        output_custom, output_official, rtol=1e-4, atol=5e-6
+        output_custom.to(dtype), output_official.to(dtype), rtol=rtol, atol=atol
     ), f"Forward result mismatch. l1: {F.l1_loss(output_custom, output_official)}"
 
 

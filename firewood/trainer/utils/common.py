@@ -1,10 +1,11 @@
 import os
 from collections import defaultdict
-from typing import Callable, Optional, Union
+from typing import Callable, Optional, Sequence, Union
 
 from lightning_lite.utilities.rank_zero import _get_rank
 from pytorch_lightning import Trainer
 from torch import Tensor
+from torch.optim import Optimizer
 
 from firewood.utils.common import get_last_file, maximum_multiple_of_divisor
 
@@ -36,6 +37,24 @@ def get_maximum_multiple_batch(input: Tensor, divisor: int) -> Tensor:
     return input[: maximum_multiple_of_divisor(B, divisor)]
 
 
-def reset_optimizers(trainer: Trainer) -> None:
-    for optimizer in trainer.optimizers:
-        optimizer.state = defaultdict(dict)
+def reset_optimizers(
+    obj: Union[Trainer, Optimizer, Sequence[Optimizer]]
+) -> None:
+    """
+    Reset the optimizer state.
+
+    Args:
+        obj: Trainer or Optimizer or Sequence of Optimizers.
+    """
+    if isinstance(obj, Trainer):
+        for optimizer in obj.optimizers:
+            optimizer.state = defaultdict(dict)
+    elif isinstance(obj, Optimizer):
+        obj.state = defaultdict(dict)
+    elif isinstance(obj, Sequence):
+        for optimizer in obj:
+            if not isinstance(optimizer, Optimizer):
+                raise TypeError(f"{optimizer} is not an optimizer.")
+            optimizer.state = defaultdict(dict)
+    else:
+        raise TypeError(f"Unsupported type: {type(obj)}")

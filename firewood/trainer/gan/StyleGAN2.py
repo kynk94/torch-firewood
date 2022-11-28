@@ -34,7 +34,7 @@ from firewood.trainer.utils.data import (
 )
 
 
-class StyleGAN(pl.LightningModule):
+class StyleGAN2(pl.LightningModule):
     def __init__(
         self,
         latent_dim: int = 512,
@@ -47,7 +47,6 @@ class StyleGAN(pl.LightningModule):
         mbstd_group: int = 4,
         truncation: float = 0.5,
         resolution: int = 1024,
-        initial_resolution: int = 4,
         image_channels: int = 3,
         dataset_size: int = 60000,
         initial_batch_size: int = 64,
@@ -252,7 +251,10 @@ class StyleGAN(pl.LightningModule):
         )
 
         max_phase = int(
-            math.log2(self.hparams.resolution / self.hparams.initial_resolution)
+            math.log2(
+                self.hparams.resolution
+                / self.generator.synthesis.initial_resolution
+            )
         )
         scheduler_kwargs = dict(
             dataset_size=getattr(self.hparams, "dataset_size", 60000),
@@ -310,7 +312,7 @@ def main():
     step_group.add_argument("--step", "-s", type=int, default=-1)
     parser.add_argument("--checkpoint", "-ckpt", type=str, default=None)
     parser.add_argument("--resolution", "-r", type=int, default=1024)
-    parser.add_argument("--batch_size", "-b", type=int, default=64)
+    parser.add_argument("--batch_size", "-b", type=int, default=4)
     parser.add_argument("--latent_dim", "-l", type=int, default=512)
     parser.add_argument("--learning_rate", "-lr", type=float, default=1e-3)
     parser.add_argument("--runtime_build", "-rb", action="store_true")
@@ -353,7 +355,7 @@ def main():
         pin_memory=False,
     )
 
-    model = StyleGAN(
+    model = StyleGAN2(
         latent_dim=512,
         label_dim=0,
         style_dim=512,
@@ -364,7 +366,6 @@ def main():
         truncation=0.5,
         mbstd_group=4,
         resolution=args["resolution"],
-        initial_resolution=8,
         image_channels=3,
         dataset_size=len(datasets[0]),
         initial_batch_size=args["batch_size"],

@@ -3,6 +3,8 @@ from typing import Dict, Optional, Tuple
 from torch.optim import Optimizer
 from torch.optim.lr_scheduler import _LRScheduler
 
+from firewood.trainer.utils import reset_optimizers
+
 
 class PhaseScheduler(_LRScheduler):
     """
@@ -68,7 +70,7 @@ class PhaseScheduler(_LRScheduler):
             phase = self.max_phase
 
         if self.reset_optimizer and self.phase != phase:
-            self.optimizer.state = dict()
+            reset_optimizers(self.optimizer)
 
         self.phase = phase
         self.alpha = alpha

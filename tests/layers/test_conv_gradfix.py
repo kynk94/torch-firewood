@@ -7,7 +7,10 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
-from firewood.common.backend import set_weight_grad_disabled
+from firewood.common.backend import (
+    no_weight_grad_in_gfix_conv,
+    set_weight_grad_disabled,
+)
 from firewood.layers import conv_gradfix
 from tests.helpers.runif import runif
 from tests.helpers.utils import gen_params
@@ -137,7 +140,7 @@ def test_no_weight_gradients_in_gfix_conv(
     y: Tensor = conv(x)
     y_copy: Tensor = conv_copy(x_copy)
 
-    with conv_gradfix.no_weight_gradients_in_gfix_conv():
+    with no_weight_grad_in_gfix_conv():
         weight_grad = torch.autograd.grad(
             outputs=[y.square().sum() + conv.weight.square().sum()],
             inputs=[conv.weight],
