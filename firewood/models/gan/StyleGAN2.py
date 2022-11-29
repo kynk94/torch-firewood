@@ -1,16 +1,14 @@
 import argparse
 import math
 import random
-from typing import Optional, Tuple, Union
+from typing import Optional, Union
 
 import torch
 import torch.nn as nn
-import torch.nn.functional as F
 from torch import Tensor
 
 from firewood import hooks, layers, utils
 from firewood.common.types import NUMBER
-from firewood.layers.biased_activations import ACTIVATIONS
 
 
 class MappingNetwork(nn.Module):
@@ -36,7 +34,7 @@ class MappingNetwork(nn.Module):
         normalize_latents: bool = True,
         bias: bool = True,
         activation: str = "lrelu",
-        style_avg_beta: float = 0.995,
+        style_avg_beta: Optional[float] = 0.995,
     ) -> None:
         super().__init__()
         self.latent_dim = latent_dim
@@ -176,7 +174,7 @@ class ToImage(nn.Module):
         return output
 
 
-class UpConvConvBlock(nn.Module):
+class UpSkipBlock(nn.Module):
     def __init__(
         self,
         style_dim: int,
@@ -274,7 +272,7 @@ class SynthesisNetwork(nn.Module):
                     max=self.max_channels,
                     decay=self.channels_decay,
                 )
-                self.layers[str(resolution)] = UpConvConvBlock(
+                self.layers[str(resolution)] = UpSkipBlock(
                     style_dim,
                     in_channels,
                     out_channels,
@@ -447,7 +445,7 @@ class Generator(nn.Module):
 # ------------------------------------------------------------------------------
 
 
-class ConvConvDownBlock(nn.Module):
+class ResDownBlock(nn.Module):
     def __init__(
         self,
         in_channels: int,
@@ -474,6 +472,7 @@ class ConvConvDownBlock(nn.Module):
             out_channels,
             fir=fir,
             down=down,
+            activation_args={"gain": math.sqrt(0.5)},
             **kwargs,
         )
         self.conv_skip = layers.Conv2dBlock(
@@ -483,14 +482,14 @@ class ConvConvDownBlock(nn.Module):
             fir=fir,
             down=down,
             bias=False,
+            activation_args={"gain": math.sqrt(0.5)},
         )
-        self.activation_gain = 1 / math.sqrt(2)
 
     def forward(self, input: Tensor) -> Tensor:
         skip = self.conv_skip(input)
         output = self.conv_1(input)
         output = self.conv_2(output)
-        return self.activation_gain * (output + skip)
+        return skip + output
 
 
 class Discriminator(nn.Module):
@@ -529,7 +528,7 @@ class Discriminator(nn.Module):
             self.image_channels, in_channels, 1, 1, 0, **kwargs
         )
         for i in range(self.n_layers - 1, -1, -1):
-            resolution = 2 ** (i + 2)
+            resolution = self.initial_resolution * 2**i
             if i < self.n_layers - 1:
                 in_channels = out_channels
             out_channels = _calc_channels(
@@ -537,7 +536,7 @@ class Discriminator(nn.Module):
             )
 
             if i > 0:
-                self.layers[str(resolution)] = ConvConvDownBlock(
+                self.layers[str(resolution)] = ResDownBlock(
                     in_channels,
                     out_channels,
                     fir=fir,
@@ -568,9 +567,19 @@ class Discriminator(nn.Module):
                         bias=kwargs.get("bias", True),
                     ),
                 )
+                if self.label_dim == 0:
+                    self.mapping = None
+                else:
+                    self.mapping = MappingNetwork(
+                        latent_dim=self.label_dim,
+                        style_dim=out_features,
+                        style_avg_beta=None,
+                    )
 
         if lr_equalization:
             hooks.lr_equalizer(module=self, lr_multiplier=lr_multiplier)
+            if self.mapping is not None:
+                hooks.lr_equalizer(module=self.mapping, lr_multiplier=0.01)
 
     def forward(
         self,
@@ -589,7 +598,9 @@ class Discriminator(nn.Module):
             output = self.layers[str(current_resolution)](output)
         output = self.layers["last"](output)
         if label is not None:
+            label: Tensor = self.mapping(label)
             output = (output * label).sum(dim=1, keepdim=True)
+            output = output / math.sqrt(output.size(-1))
         return output
 
 

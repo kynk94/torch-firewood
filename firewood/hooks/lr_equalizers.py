@@ -176,7 +176,7 @@ class WeightLREqualizer(_LREqualizer):
         module: nn.Module,
         name: str = "weight",
         lr_multiplier: float = 1.0,
-        gain: float = 1.0,
+        gain: Optional[float] = None,
         init_std: float = 1.0,
         recursive: bool = True,
         keep_value: bool = False,
@@ -219,10 +219,14 @@ class WeightLREqualizer(_LREqualizer):
         init_std: Optional[float] = None,
         keep_value: bool = False,
     ) -> None:
+        # gain_name does not start with "_", and does not setattr while applying
+        # Only manually set gain_name will be used.
+        gain_name = f"{self.name}_gain"
         coeff_name = f"_{self.name}_coeff"
         init_name = f"_{self.name}_init"
 
         original_weight: Tensor = utils.popattr(module, self.call_name)
+        original_gain: Optional[Tensor] = getattr(module, gain_name, None)
         original_coeff: Optional[Tensor] = getattr(module, coeff_name, None)
         if original_coeff is not None:
             original_weight = original_weight * original_coeff
@@ -235,7 +239,7 @@ class WeightLREqualizer(_LREqualizer):
         if original_coeff is not None:
             original_coeff *= math.sqrt(fan_in) / lr_multiplier
         if gain is None:
-            gain = original_coeff or 1.0
+            gain = original_gain or 1.0
         if init_std is None:
             init_std = cast(float, getattr(module, init_name, 1.0))
         coeff = gain * lr_multiplier / math.sqrt(fan_in)
@@ -266,7 +270,7 @@ def lr_equalizer(
     weight_name: str = "weight",
     bias_name: str = "bias",
     lr_multiplier: float = 1.0,
-    weight_gain: float = 1.0,
+    weight_gain: Optional[float] = None,
     weight_init_std: float = 1.0,
     bias_init: float = 0.0,
     keep_value: bool = False,
