@@ -13,12 +13,13 @@ from firewood import utils
 from firewood.common.constant import NULL_TENSOR
 from firewood.common.types import DEVICE, INT, NUMBER
 from firewood.functional.upfirdn import _parse_padding, upfirdnNd
+from firewood.layers.upsampling import Upsample
 from firewood.utils.extensions import CUDAExtension
 
 FORCE_DEFAULT = False
 
 
-def get_upfirdn_layer(
+def get_upfirdn_layers(
     rank: int,
     kernel: Optional[NUMBER] = None,
     up: Optional[INT] = 1,
@@ -27,17 +28,30 @@ def get_upfirdn_layer(
     gain: float = 1.0,
     normalize_kernel: bool = True,
     flip_kernel: bool = False,
+    upsample_mode: str = "zeros",
     device: Optional[DEVICE] = None,
-) -> Tuple[Optional[nn.Upsample], Optional["_UpFirDnNd"]]:
+) -> Tuple[Optional[Upsample], Optional["_UpFirDnNd"]]:
+    """
+    Get upsample and fir_downsample layers for the given rank.
+
+    Because the basic order of layers is as follows, the returned layers are
+    split into (upsample), (fir_downsample) parts.
+    Basic Order: upsample -> weighting -> fir filtering -> downsample
+
+    Args:
+        upsample_mode: "zeros" or "nearest"
+    """
     if rank == 0:
         return None, None
-    upsample_layer: Optional[nn.Upsample] = None
+    upsample_layer: Optional[Upsample] = None
     fir_downsample_layer: Optional[_UpFirDnNd] = None
     up = utils.normalize_int_tuple(up or 1, rank)
     down = utils.normalize_int_tuple(down or 1, rank)
     module: _UpFirDnNd = getattr(sys.modules[__name__], f"UpFirDn{rank}d")
     if any(u > 1 for u in up):
-        upsample_layer = nn.Upsample(scale_factor=up, mode="nearest")
+        upsample_layer = Upsample(scale_factor=up, mode=upsample_mode)
+        if upsample_mode.startswith("zero"):
+            gain *= cast(float, np.prod(up))
     if any(d > 1 for d in down) or kernel is not None:
         fir_downsample_layer = module(
             kernel=kernel,

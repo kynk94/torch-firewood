@@ -32,7 +32,7 @@ def firNd(
         kernel = kernel * gain ** (kernel.ndim / rank)
     kernel = kernel.view(1, 1, *kernel.shape)
     # kernel = kernel.expand(C, 1, *kernel.shape[2:]) is best implementation.
-    # But torch.onnx not support expand before convolution.
+    # But torch.onnx not support expand and repeat before convolution.
     kernel = torch.cat([kernel for _ in range(C)], dim=0)
 
     if kernel.ndim == input.ndim:
@@ -53,15 +53,19 @@ def upfirdnNd(
     padding: INT = 0,
     upsample_mode: str = "zeros",
 ) -> Tensor:
+    """
+    Args:
+        upsample_mode: "zeros" or "nearest"
+    """
     up = normalize_int_tuple(up, input.ndim - 2)
     down = normalize_int_tuple(down, input.ndim - 2)
     padding = _parse_padding(input.ndim - 2, padding)
 
     # upsample
-    if any(u > 1 for u in up) and all(u >= 1 for u in up):
+    if any(u > 1 for u in up):
         input = upsample(input, up, mode=upsample_mode)
-    if upsample_mode.startswith("zero"):
-        gain = gain * cast(float, np.prod(up))
+        if upsample_mode.startswith("zero"):
+            gain = gain * cast(float, np.prod(up))
 
     # pad
     if any(p != 0 for p in padding):
@@ -71,7 +75,7 @@ def upfirdnNd(
     output = firNd(input, kernel, gain=gain, flip_kernel=flip_kernel)
 
     # downsample
-    if any(d > 1 for d in down) and all(d >= 1 for d in down):
+    if any(d > 1 for d in down):
         output = nearest_downsample(output, down)
     return output
 

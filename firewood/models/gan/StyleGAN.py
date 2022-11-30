@@ -211,7 +211,12 @@ class UpConvConvBlock(nn.Module):
             op_order="WAN",
         )
         self.conv_adain_1 = layers.Conv2dBlock(
-            in_channels, out_channels, fir=fir, up=up, **kwargs
+            in_channels,
+            out_channels,
+            fir=fir,
+            up=up,
+            fir_args={"upsample_mode": "nearest"},
+            **kwargs,
         )
         self.conv_adain_1.update_layer_in_order(
             "normalization",
@@ -296,6 +301,7 @@ class SynthesisNetwork(nn.Module):
                     out_channels,
                     fir=fir,
                     up=2,
+                    fir_args={"upsample_mode": "nearest"},
                     **conv_kwargs,
                 )
 
