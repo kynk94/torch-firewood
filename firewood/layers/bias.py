@@ -36,7 +36,7 @@ class Bias(nn.Module):
         if self.bias is None:
             return
         if self.initializer == "uniform":  # default torch init
-            bound = 1 / math.sqrt(self.bias.shape[0])  # use fan_out as fan_in
+            bound = 1 / math.sqrt(self.bias.size(0))  # use fan_out as fan_in
             init.uniform_(self.bias, -bound, bound)
         else:
             initializers.get(self.initializer)(self.bias)
@@ -66,7 +66,7 @@ class Bias(nn.Module):
     def extra_repr(self) -> str:
         return ", ".join(
             [
-                f"size={self.bias.shape[0] if self.bias is not None else None}",
+                f"size={self.bias.size(0) if self.bias is not None else None}",
                 f"bias_add_dim={self.bias_add_dim}",
                 f"initializer={self.initializer}",
                 f"dtype={self.dtype}",

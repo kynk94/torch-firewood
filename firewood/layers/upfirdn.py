@@ -28,7 +28,6 @@ def get_upfir_firdn_layers(
     normalize_kernel: bool = True,
     flip_kernel: bool = False,
     upsample_mode: str = "zeros",
-    device: Optional[DEVICE] = None,
 ) -> Tuple[Optional["_UpFirDnNd"], Optional["_UpFirDnNd"]]:
     """
     Get upsample_fir and fir_downsample layers, not upfirdn, for the given rank.
@@ -62,7 +61,6 @@ def get_upfir_firdn_layers(
             normalize_kernel=normalize_kernel,
             flip_kernel=flip_kernel,
             ignore_same_padding=False,
-            device=device,
         )
     if any(d > 1 for d in down):
         fir_downsample_layer = module(
@@ -74,14 +72,17 @@ def get_upfir_firdn_layers(
             normalize_kernel=normalize_kernel,
             flip_kernel=flip_kernel,
             ignore_same_padding=False,
-            device=device,
         )
     return upsample_fir_layer, fir_downsample_layer
 
 
 class _UpFirDnNd(nn.Module):
     force_default = FORCE_DEFAULT
+    use_resample = False
     kernel: Tensor
+
+    __up: Tuple[int, ...] = (1,)
+    __down: Tuple[int, ...] = (1,)
 
     def __init__(
         self,
@@ -99,7 +100,6 @@ class _UpFirDnNd(nn.Module):
     ) -> None:
         super().__init__()
         self.device = torch.device(device or "cpu")
-
         self.rank = rank
         self.up = utils.normalize_int_tuple(up, rank)
         self.down = utils.normalize_int_tuple(down, rank)
@@ -120,7 +120,6 @@ class _UpFirDnNd(nn.Module):
             ),
         )
         self.use_fir = self.kernel.numel() != 1 or self.kernel.item() != 1.0
-        self.use_resample = any(factor > 1 for factor in self.up + self.down)
         if not self.use_fir and not self.use_resample:
             raise ValueError(
                 "Both FIR and resampling are disabled. Should remove this layer."
@@ -145,7 +144,6 @@ class _UpFirDnNd(nn.Module):
             padding=self.padding,
             upsample_mode=self.upsample_mode,
         )
-        self.to(device=self.device)
 
     def _apply(self, fn: Callable[..., Any]) -> "_UpFirDnNd":
         if "t" in fn.__code__.co_varnames:
@@ -153,6 +151,24 @@ class _UpFirDnNd(nn.Module):
                 device = getattr(fn(NULL_TENSOR), "device", "cpu")
             self.device = torch.device(device)
         return super()._apply(fn)
+
+    @property
+    def up(self) -> Tuple[int, ...]:
+        return self.__up
+
+    @up.setter
+    def up(self, value: INT) -> None:
+        self.__up = utils.normalize_int_tuple(value, self.rank)
+        self.use_resample = any(factor > 1 for factor in self.up + self.down)
+
+    @property
+    def down(self) -> Tuple[int, ...]:
+        return self.__down
+
+    @down.setter
+    def down(self, value: INT) -> None:
+        self.__down = utils.normalize_int_tuple(value, self.rank)
+        self.use_resample = any(factor > 1 for factor in self.up + self.down)
 
     @property
     def operation(self) -> Callable[..., Tensor]:
