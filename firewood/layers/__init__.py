@@ -56,6 +56,6 @@ from .minibatch_std import MinibatchStd
 from .noise import GaussianNoise, UniformNoise
 from .normalizations import BatchNorm, GroupNorm, InstanceNorm, PixelNorm
 from .positional_encoding import CoordPositionalEncoding, SeqPositionalEncoding
+from .resample import Upsample
 from .reshape import Reshape, Reshape1d, Reshape2d, Reshape3d
 from .upfirdn import UpFirDn1d, UpFirDn2d, UpFirDn3d
-from .upsampling import Upsample

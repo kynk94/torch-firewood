@@ -15,11 +15,13 @@ from firewood.layers import noise as _noise
 from firewood.layers import normalizations
 from firewood.layers.bias import Bias
 from firewood.layers.biased_activations import ACTIVATIONS, BiasedActivation
-from firewood.layers.upfirdn import get_upfirdn_layer
+from firewood.layers.upfirdn import get_upfir_firdn_layers
 
 # If want to use other layers in Block, modify values of SUPPORT_LAYER_NAMES.
+# Set the name not to be confused with `nn.Module` basic attr name.
+# (ex. "weight" -> "weighting", "bias" -> "add_bias")
 SUPPORT_LAYER_NAMES = {
-    "W": ["up", "weighting", "fir_down", "noise"],
+    "W": ["up_fir", "weighting", "fir_down", "noise"],
     "N": ["normalization"],
     "B": ["add_bias"],
     "A": ["activation", "dropout"],
@@ -74,10 +76,10 @@ class Block(nn.Module):
         self.update_layer_in_order("weighting", weight_layer)
 
         # set FIR filter
-        upsample_layer, fir_down_layer = get_upfirdn_layer(
+        up_fir_layer, fir_down_layer = get_upfir_firdn_layers(
             rank=self.rank, kernel=fir, up=up, down=down, **fir_args or dict()
         )
-        self.update_layer_in_order("up", upsample_layer)
+        self.update_layer_in_order("up_fir", up_fir_layer)
         self.update_layer_in_order("fir_down", fir_down_layer)
 
         # set noise
@@ -267,6 +269,18 @@ class Block(nn.Module):
         Use only trainable fused layers.
         """
 
+        def __fuse_upsample_convolution() -> None:
+            if "weighting" not in self.layers:
+                return
+            if "up_fir" not in self.layers:
+                return
+
+        def __fuse_downsample_convolution() -> None:
+            if "weighting" not in self.layers:
+                return
+            if "fir_down" not in self.layers:
+                return
+
         def __fuse_biased_activation() -> None:
             if "activation" not in self.layers:
                 return
@@ -281,6 +295,8 @@ class Block(nn.Module):
                 lr_equalizers.transfer_bias_attrs(bias_layer, activation_layer)
                 self._update_layer_in_order("add_bias", None)
 
+        __fuse_upsample_convolution()
+        __fuse_downsample_convolution()
         __fuse_biased_activation()
 
     def __unravel_fused_layers_if_faster(self) -> None:

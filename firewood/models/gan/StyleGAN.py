@@ -3,19 +3,27 @@ StyleGAN
 
 A Style-Based Generator Architecture for Generative Adversarial Networks
 https://arxiv.org/abs/1812.04948
+https://github.com/NVlabs/stylegan
 
 Differences from the official implementation:
     official:
       * Uses weight size of noise as 'inputs channels'.
-        By the way, official StyleGAN2 uses weight size of noise as '1'.
       * Activation gain is multiplied to the weight at runtime.
       * Uses instance normalization without bessel's correction.
+      * Uses 'nearest neighbor' for upsampling.
+      * Uses 'average pooling' instead of 'nearest neighbor' for downsampling.
     this:
       * Uses weight size of noise as '1' for convenience, following to the
-        implementation of official StyleGAN2.
-      * Activation gain is multiplied after activation like official StyleGAN2.
+        official StyleGAN2.
+      * Activation gain is multiplied after activation following to the official
+        StyleGAN2.
       * Uses instance normalization with bessel's correction, following to the
-        implementation of official AdaIN.
+        official AdaIN.
+      * Uses 'zero insertion' for upsampling following to the official StyleGAN2,
+        except alpha blending (ToImage layer).
+      * Uses 'nearest neighbor' for downsampling following to the official
+        StyleGAN2, except alpha blending (FromImage layer).
+
 
 Therefore, the difference in the total number of parameters come from
 the noise layers.
@@ -31,7 +39,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from torch import Tensor
 
-from firewood import hooks, layers, utils
+from firewood import functional, hooks, layers, utils
 from firewood.common.types import NUMBER
 
 
@@ -211,12 +219,7 @@ class UpConvConvBlock(nn.Module):
             op_order="WAN",
         )
         self.conv_adain_1 = layers.Conv2dBlock(
-            in_channels,
-            out_channels,
-            fir=fir,
-            up=up,
-            fir_args={"upsample_mode": "nearest"},
-            **kwargs,
+            in_channels, out_channels, fir=fir, up=up, **kwargs
         )
         self.conv_adain_1.update_layer_in_order(
             "normalization",
@@ -301,7 +304,6 @@ class SynthesisNetwork(nn.Module):
                     out_channels,
                     fir=fir,
                     up=2,
-                    fir_args={"upsample_mode": "nearest"},
                     **conv_kwargs,
                 )
 
@@ -649,7 +651,7 @@ class Discriminator(nn.Module):
                 and 0.0 <= alpha < 1.0
             ):
                 lower_output = self.from_images[str(resolution // 2)](
-                    utils.image.nearest_downsample(input, 2)
+                    F.avg_pool2d(input, 2)
                 )
                 output = torch.lerp(lower_output, output, alpha)
         output = self.layers["last"](output)
@@ -705,7 +707,7 @@ def main() -> None:
             style_vector: Tensor = self.generator.mapping(input, label)
             images = self.generator.synthesis.inference_all(style_vector)
             for image in reversed(images):
-                score = self.discriminator(image, label=label)
+                score = self.discriminator(image, label=label, alpha=0.5)
             return score
 
     summary = Summary()

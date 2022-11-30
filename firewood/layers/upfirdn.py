@@ -13,13 +13,12 @@ from firewood import utils
 from firewood.common.constant import NULL_TENSOR
 from firewood.common.types import DEVICE, INT, NUMBER
 from firewood.functional.upfirdn import _parse_padding, upfirdnNd
-from firewood.layers.upsampling import Upsample
 from firewood.utils.extensions import CUDAExtension
 
 FORCE_DEFAULT = False
 
 
-def get_upfirdn_layers(
+def get_upfir_firdn_layers(
     rank: int,
     kernel: Optional[NUMBER] = None,
     up: Optional[INT] = 1,
@@ -30,29 +29,42 @@ def get_upfirdn_layers(
     flip_kernel: bool = False,
     upsample_mode: str = "zeros",
     device: Optional[DEVICE] = None,
-) -> Tuple[Optional[Upsample], Optional["_UpFirDnNd"]]:
+) -> Tuple[Optional["_UpFirDnNd"], Optional["_UpFirDnNd"]]:
     """
-    Get upsample and fir_downsample layers for the given rank.
+    Get upsample_fir and fir_downsample layers, not upfirdn, for the given rank.
 
     Because the basic order of layers is as follows, the returned layers are
-    split into (upsample), (fir_downsample) parts.
-    Basic Order: upsample -> weighting -> fir filtering -> downsample
+    split into (upsample_fir, fir_downsample).
+    Basic Order: upsample -> fir -> weighting -> fir -> downsample
 
     Args:
         upsample_mode: "zeros" or "nearest"
     """
+    # `rank` == 0 means only linear layer, not 1x1 convolution, in Block.
     if rank == 0:
         return None, None
-    upsample_layer: Optional[Upsample] = None
+    upsample_fir_layer: Optional[_UpFirDnNd] = None
     fir_downsample_layer: Optional[_UpFirDnNd] = None
     up = utils.normalize_int_tuple(up or 1, rank)
     down = utils.normalize_int_tuple(down or 1, rank)
     module: _UpFirDnNd = getattr(sys.modules[__name__], f"UpFirDn{rank}d")
     if any(u > 1 for u in up):
-        upsample_layer = Upsample(scale_factor=up, mode=upsample_mode)
         if upsample_mode.startswith("zero"):
-            gain *= cast(float, np.prod(up))
-    if any(d > 1 for d in down) or kernel is not None:
+            up_gain = gain * cast(float, np.prod(up))
+        else:
+            up_gain = gain
+        upsample_fir_layer = module(
+            kernel=kernel,
+            up=up,
+            down=1,
+            padding=padding,
+            gain=up_gain,
+            normalize_kernel=normalize_kernel,
+            flip_kernel=flip_kernel,
+            ignore_same_padding=False,
+            device=device,
+        )
+    if any(d > 1 for d in down):
         fir_downsample_layer = module(
             kernel=kernel,
             up=1,
@@ -64,10 +76,13 @@ def get_upfirdn_layers(
             ignore_same_padding=False,
             device=device,
         )
-    return upsample_layer, fir_downsample_layer
+    return upsample_fir_layer, fir_downsample_layer
 
 
 class _UpFirDnNd(nn.Module):
+    force_default = FORCE_DEFAULT
+    kernel: Tensor
+
     def __init__(
         self,
         rank: int,
@@ -104,6 +119,12 @@ class _UpFirDnNd(nn.Module):
                 flip_kernel=self.flip_kernel,
             ),
         )
+        self.use_fir = self.kernel.numel() != 1 or self.kernel.item() != 1.0
+        self.use_resample = any(factor > 1 for factor in self.up + self.down)
+        if not self.use_fir and not self.use_resample:
+            raise ValueError(
+                "Both FIR and resampling are disabled. Should remove this layer."
+            )
 
         padding = _parse_padding(rank=rank, padding=padding)
         if not self.ignore_same_padding:
@@ -113,13 +134,8 @@ class _UpFirDnNd(nn.Module):
                 up=self.up,
                 down=self.down,
             )
-            padding = tuple(p + s for p, s in zip(padding, same_padding))
+            padding = tuple(p + s_p for p, s_p in zip(padding, same_padding))
         self.padding = padding
-
-        if all(u == 1 for u in self.up) and all(d == 1 for d in self.down):
-            self.force_default = True
-        else:
-            self.force_default = FORCE_DEFAULT
         self.default_operation = functools.partial(
             upfirdnNd,
             gain=self.gain,
@@ -140,7 +156,11 @@ class _UpFirDnNd(nn.Module):
 
     @property
     def operation(self) -> Callable[..., Tensor]:
-        if self.device.type == "cpu" or self.force_default:
+        if (
+            self.device.type != "cuda"
+            or not self.use_resample
+            or self.force_default
+        ):
             return self.default_operation
         try:
             return load_cuda_upfirdn2d(
