@@ -18,8 +18,8 @@ class Upsample(nn.Upsample):
         ... (see `nn.Upsample`)
         size: ...
         scale_factor: ...
-        mode: { "nearest", "zero", "linear", "bilinear", "bicubic", "trilinear" }
-            Mode "zero" is zero insertion upsampling. If mode is "zero", `size`
+        mode: { "nearest", "zeros", "linear", "bilinear", "bicubic", "trilinear" }
+            Mode "zeros" is zero insertion upsampling. If mode is "zeros", `size`
             argument does not supported and `scale_factor` must be integer.
             Default: "nearest".
         align_corners: ...
@@ -37,16 +37,16 @@ class Upsample(nn.Upsample):
         gain: float = 1.0,
     ) -> None:
         if mode.startswith("zero"):
-            mode = "zero"
+            mode = "zeros"
         super().__init__(
             size, scale_factor, mode, align_corners, recompute_scale_factor
         )
         self.gain = gain
 
-        if self.mode == "zero":
+        if self.mode == "zeros":
             if size is not None:
                 raise ValueError(
-                    "`size` argument is not supported for `mode` 'zero'."
+                    "`size` argument is not supported for `mode` 'zeros'."
                 )
             if (
                 isinstance(self.scale_factor, float)
@@ -59,11 +59,11 @@ class Upsample(nn.Upsample):
                 self.scale_factor = tuple(int(s) for s in self.scale_factor)
             else:
                 raise ValueError(
-                    "`scale_factor` must be integer for `mode` 'zero'."
+                    "`scale_factor` must be integer for `mode` 'zeros'."
                 )
 
     def forward(self, input: Tensor) -> Tensor:
-        if self.mode == "zero":
+        if self.mode == "zeros":
             output = zero_insertion_upsample(
                 input, cast(INT, self.scale_factor)
             )
