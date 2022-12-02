@@ -150,7 +150,8 @@ class _UpFirDnNd(nn.Module):
     def _apply(self, fn: Callable[..., Any]) -> "_UpFirDnNd":
         if "t" in fn.__code__.co_varnames:
             with torch.no_grad():
-                device = getattr(fn(NULL_TENSOR), "device", "cpu")
+                null_tensor = NULL_TENSOR.to(device=self.device)
+                device = getattr(fn(null_tensor), "device", "cpu")
             self.device = torch.device(device)
         return super()._apply(fn)
 
