@@ -118,7 +118,7 @@ def unsqueeze_repeatedly(
     return tensor
 
 
-def unsqueeze_view(tensor: Tensor, dim: int, times: int) -> Tensor:
+def unsqueeze_view(tensor: Tensor, dim: int, times: int = 1) -> Tensor:
     if dim < 0:
         dim += tensor.ndim + 1
     return tensor.view(tensor.shape[:dim] + (1,) * times + tensor.shape[dim:])

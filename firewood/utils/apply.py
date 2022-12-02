@@ -1,3 +1,8 @@
+"""
+Modify attributes of layers in the implemented model.
+
+Do not import this module from layers, as it will cause circular imports.
+"""
 from typing import Any, Type
 
 import torch.nn as nn
