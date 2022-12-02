@@ -391,23 +391,24 @@ def pop_bias_attrs(
     bias_coeff = getattr(module, "_bias_coeff", 1.0)
     bias_init = getattr(module, "_bias_init", 0.0)
     try:
-        _pop_bias_lr_equalizer(module, raise_exception=True)
+        hook = _pop_bias_lr_equalizer(module, raise_exception=True)
+        original_name = hook.name
         use_hook = True
     except RuntimeError:
+        original_name = "bias"
         use_hook = False
 
-    bias: Optional[Parameter] = None
     for name, param in module.named_parameters(recurse=False):
-        if "bias" in name:
+        if "bias" in name or name == original_name:
             bias: Parameter = utils.popattr(module, name)
             module.register_parameter(name, None)
-            break
-    return {
-        "bias": bias,
-        "coeff": bias_coeff,
-        "init": bias_init,
-        "use_hook": use_hook,
-    }
+            return {
+                "bias": bias,
+                "coeff": bias_coeff,
+                "init": bias_init,
+                "use_hook": use_hook,
+            }
+    raise ValueError("Bias is not found.")
 
 
 def set_bias_attrs(
