@@ -43,7 +43,6 @@ class Block(nn.Module):
 
     # private properties
     __op_order = "WNA"
-    SUPPORT_LAYER_NAMES = copy.deepcopy(SUPPORT_LAYER_NAMES)
 
     def __init__(
         self,
@@ -67,6 +66,7 @@ class Block(nn.Module):
         lr_equalization_args: Optional[Dict[str, Any]] = None,
     ) -> None:
         super().__init__()
+        self.SUPPORT_LAYER_NAMES = copy.deepcopy(SUPPORT_LAYER_NAMES)
         self.rank = utils.get_rank(weight_layer)
         self.op_order = op_order
         self.keep_meaningless_bias = keep_meaningless_bias
@@ -312,7 +312,6 @@ class Block(nn.Module):
         def __fuse_upsample_convolution() -> None:
             weight_layer = self.layers.get_submodule("weighting")
             up_layer = cast(_UpFirDnNd, self.layers.get_submodule("up_fir"))
-            stride = up_layer.up
 
         def __fuse_downsample_convolution() -> None:
             weight_layer = self.layers.get_submodule("weighting")
@@ -377,8 +376,8 @@ class Block(nn.Module):
                 return
             self.__update_activation(fuse=True)
             activation_layer = self.layers.get_submodule("activation")
-            bias_layer = self.layers.get_submodule("add_bias")
             if isinstance(activation_layer, BiasedActivation):
+                bias_layer = self.layers.get_submodule("add_bias")
                 lr_equalizers.transfer_bias_attrs(bias_layer, activation_layer)
                 self._update_layer_in_order("add_bias", None)
 
@@ -394,7 +393,7 @@ class Block(nn.Module):
             if "activation" not in self.layers:
                 return
             activation_layer = self.layers.get_submodule("activation")
-            gain = getattr(self.activation_args, "gain", None)
+            gain = self.activation_args.get("gain", None)
             if self.lr_equalization and gain is None:
                 return
             if (
@@ -405,7 +404,7 @@ class Block(nn.Module):
                 bias_layer = Bias()
                 lr_equalizers.transfer_bias_attrs(activation_layer, bias_layer)
                 self._update_layer_in_order("add_bias", bias_layer)
-            self.__update_activation(fuse=False)
+                self.__update_activation(fuse=False)
 
         __unravel_biased_activation()
 

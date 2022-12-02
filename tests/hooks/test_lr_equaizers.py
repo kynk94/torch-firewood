@@ -1,3 +1,4 @@
+import numpy as np
 import torch
 import torch.nn as nn
 import torch.nn.functional as F
@@ -7,7 +8,9 @@ from firewood.layers.conv_blocks import Conv2dBlock
 
 
 def test_assign_and_remove():
-    kwargs = dict(bias=True, activation="lrelu")
+    kwargs = dict(
+        bias=True, activation="lrelu", activation_args={"gain": np.sqrt(2)}
+    )
     model = nn.Sequential(
         Conv2dBlock(3, 3, 3, 2, 1, **kwargs),
         Conv2dBlock(3, 3, 3, 2, 1, **kwargs),
