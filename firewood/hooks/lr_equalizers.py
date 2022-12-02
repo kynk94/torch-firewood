@@ -379,7 +379,7 @@ def _pop_weight_lr_equalizer(
 
 
 class BIAS_ATTRS(TypedDict):
-    bias: Optional[Parameter]
+    bias: Parameter
     coeff: float
     init: float
     use_hook: bool
@@ -400,11 +400,11 @@ def pop_bias_attrs(
 
     for name, param in module.named_parameters(recurse=False):
         if "bias" in name or name == original_name:
-            bias: Parameter = utils.popattr(module, name)
+            bias = cast(Parameter, utils.popattr(module, name))
             module.register_parameter(name, None)
             break
     else:
-        bias = None
+        raise ValueError("Bias is not found in the module.")
     return {
         "bias": bias,
         "coeff": bias_coeff,

@@ -215,11 +215,13 @@ class Block(nn.Module):
         if "weighting" not in self.layers:
             return
         weight_layer = self.layers.get_submodule("weighting")
-        bias_attrs = lr_equalizers.pop_bias_attrs(weight_layer)
-        if bias_attrs["bias"] is None:
+        for name, param in weight_layer.named_parameters(recurse=False):
+            if "bias" in name:
+                break
+        else:
             return
         bias_layer = Bias()
-        lr_equalizers.set_bias_attrs(bias_layer, **bias_attrs)
+        lr_equalizers.transfer_bias_attrs(weight_layer, bias_layer)
         self._update_layer_in_order("add_bias", bias_layer)
 
     def __remove_meaningless_bias(self) -> None:
