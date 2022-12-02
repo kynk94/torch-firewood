@@ -57,11 +57,11 @@ class WeightDeNormOutput(_Hook):
         return fn
 
     def remove(self, module: nn.Module) -> None:
-        bias: Optional[Tensor] = getattr(self, self.name, None)
-        if bias is not None:
-            utils.popattr(module, self.name, None)
-            module.register_parameter(self.name, Parameter(bias.detach()))
-        delattr(module, self.param_name)
+        bias: Optional[Tensor] = utils.popattr(module, self.param_name, None)
+        if bias is None:
+            return
+        utils.popattr(module, self.name, None)
+        module.register_parameter(self.name, Parameter(bias.detach()))
 
     def __call__(
         self, module: nn.Module, input: Tensor, output: Tensor
@@ -344,7 +344,7 @@ def remove_weight_denorm(module: nn.Module) -> nn.Module:
     for submodule in module.modules():
         for k, hook in submodule._forward_pre_hooks.items():
             if isinstance(hook, WeightDeNorm):
-                # WeightDeNorm removes WeightDeNormOutput too.
+                # WeightDeNorm automatically removes WeightDeNormOutput.
                 hook.remove(submodule)
                 del submodule._forward_pre_hooks[k]
                 break

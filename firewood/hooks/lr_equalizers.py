@@ -42,7 +42,11 @@ _EXCLUDE_PATTERN = {
 
 class _LREqualizer(_Hook):
     def __init__(self, name: str) -> None:
-        self.call_name = self.name = name
+        if name.endswith("_orig"):
+            self.call_name = name
+            self.name = name.rstrip("_orig")
+        else:
+            self.call_name = self.name = name
 
     @staticmethod
     def is_applicable(module: nn.Module, name: str) -> bool:
@@ -75,12 +79,17 @@ class _LREqualizer(_Hook):
     def remove(self, module: nn.Module) -> None:
         with torch.no_grad():
             parameter = self.compute(module)
+        parameter = Parameter(parameter.detach())
+
         delattr(module, self.name + "_param")
         delattr(module, f"_{self.name}_coeff")
         delattr(module, f"_{self.name}_init")
-        delattr(module, self.call_name)
-        module.register_parameter(self.call_name, Parameter(parameter.detach()))
-        _set_lr_equalization(module=module, value=False)
+        if hasattr(module, self.call_name):
+            delattr(module, self.call_name)
+            module.register_parameter(self.call_name, parameter)
+        elif isinstance(getattr(module, self.name, None), Parameter):
+            delattr(module, self.name)
+            module.register_parameter(self.name, parameter)
 
     def compute(self, module: nn.Module) -> Tensor:
         parameter: Tensor = getattr(module, self.name + "_param")
@@ -120,9 +129,6 @@ class BiasLREqualizer(_LREqualizer):
                     fn = _fn
             return cast(BiasLREqualizer, fn)
 
-        if utils.attr_is_value(module, "lr_equalization", False):
-            _set_lr_equalization(module=module, value=True)
-            return __recursive_apply()
         if recursive:
             return __recursive_apply()
         if not _LREqualizer.is_applicable(module=module, name=name):
@@ -197,9 +203,6 @@ class WeightLREqualizer(_LREqualizer):
                     fn = _fn
             return cast(WeightLREqualizer, fn)
 
-        if utils.attr_is_value(module, "lr_equalization", False):
-            _set_lr_equalization(module=module, value=True)
-            return __recursive_apply()
         if recursive:
             return __recursive_apply()
         if not _LREqualizer.is_applicable(module=module, name=name):
@@ -256,13 +259,6 @@ class WeightLREqualizer(_LREqualizer):
         setattr(module, init_name, init_std)
 
 
-def _set_lr_equalization(module: nn.Module, value: bool) -> None:
-    if not isinstance(value, bool):
-        raise TypeError("lr_equalization must be bool type.")
-    if utils.attr_is_value(module, "lr_equalization", not value):
-        setattr(module, "lr_equalization", value)
-
-
 def lr_equalizer(
     module: Union[
         nn.Module, nn.ModuleList, List[nn.Module], Tuple[nn.Module, ...]
@@ -290,20 +286,20 @@ def lr_equalizer(
                 keep_value=keep_value,
             )
         return module
-    BiasLREqualizer.apply(
-        module=module,
-        name=bias_name,
-        lr_multiplier=lr_multiplier,
-        init=bias_init,
-        recursive=True,
-        keep_value=keep_value,
-    )
     WeightLREqualizer.apply(
         module=module,
         name=weight_name,
         lr_multiplier=lr_multiplier,
         gain=weight_gain,
         init_std=weight_init_std,
+        recursive=True,
+        keep_value=keep_value,
+    )
+    BiasLREqualizer.apply(
+        module=module,
+        name=bias_name,
+        lr_multiplier=lr_multiplier,
+        init=bias_init,
         recursive=True,
         keep_value=keep_value,
     )
@@ -322,9 +318,9 @@ def remove_lr_equalizer(
             remove_lr_equalizer(submodule)
         return module
     for submodule in module.modules():
-        _pop_bias_lr_equalizer(submodule, raise_exception=False)
-    for submodule in module.modules():
         _pop_weight_lr_equalizer(submodule, raise_exception=False)
+    for submodule in module.modules():
+        _pop_bias_lr_equalizer(submodule, raise_exception=False)
     return module
 
 
@@ -345,8 +341,6 @@ def _pop_bias_lr_equalizer(
 def _pop_bias_lr_equalizer(
     module: nn.Module, raise_exception: bool = False
 ) -> Optional[BiasLREqualizer]:
-    if utils.attr_is_value(module, "lr_equalization", True):
-        setattr(module, "lr_equalization", False)
     for k, hook in module._forward_pre_hooks.items():
         if isinstance(hook, BiasLREqualizer):
             hook.remove(module)
@@ -374,8 +368,6 @@ def _pop_weight_lr_equalizer(
 def _pop_weight_lr_equalizer(
     module: nn.Module, raise_exception: bool = False
 ) -> Optional[WeightLREqualizer]:
-    if utils.attr_is_value(module, "lr_equalization", True):
-        setattr(module, "lr_equalization", False)
     for k, hook in module._forward_pre_hooks.items():
         if isinstance(hook, WeightLREqualizer):
             hook.remove(module)
@@ -399,15 +391,17 @@ def pop_bias_attrs(
     bias_coeff = getattr(module, "_bias_coeff", 1.0)
     bias_init = getattr(module, "_bias_init", 0.0)
     try:
-        bias_hook = _pop_bias_lr_equalizer(module, raise_exception=True)
-        name, bias_hook.name = bias_hook.name, "bias"
+        _pop_bias_lr_equalizer(module, raise_exception=True)
         use_hook = True
     except RuntimeError:
-        name = "bias"
         use_hook = False
 
-    bias: Parameter = utils.popattr(module, name)
-    module.register_parameter(name, None)
+    bias: Optional[Parameter] = None
+    for name, param in module.named_parameters(recurse=False):
+        if "bias" in name:
+            bias: Parameter = utils.popattr(module, name)
+            module.register_parameter(name, None)
+            break
     return {
         "bias": bias,
         "coeff": bias_coeff,
