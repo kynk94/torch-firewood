@@ -1,6 +1,8 @@
+import copy
+import inspect
 import re
 import warnings
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, cast
 
 import torch
 import torch.nn as nn
@@ -15,7 +17,7 @@ from firewood.layers import noise as _noise
 from firewood.layers import normalizations
 from firewood.layers.bias import Bias
 from firewood.layers.biased_activations import ACTIVATIONS, BiasedActivation
-from firewood.layers.upfirdn import get_upfir_firdn_layers
+from firewood.layers.upfirdn import _UpFirDnNd, get_upfir_firdn_layers
 
 # If want to use other layers in Block, modify values of SUPPORT_LAYER_NAMES.
 # Set the name not to be confused with `nn.Module` basic attr name.
@@ -40,8 +42,8 @@ class Block(nn.Module):
     """
 
     # private properties
-    __lr_equalization = False
     __op_order = "WNA"
+    SUPPORT_LAYER_NAMES = copy.deepcopy(SUPPORT_LAYER_NAMES)
 
     def __init__(
         self,
@@ -128,7 +130,8 @@ class Block(nn.Module):
         if lr_equalization is None:
             lr_equalization = backend.lr_equalization()
         self.lr_equalization_args = lr_equalization_args or dict()
-        self.lr_equalization = lr_equalization
+        if lr_equalization:
+            lr_equalizers.lr_equalizer(self, **self.lr_equalization_args)
 
     def forward(self, input: Tensor, *extra_inputs: Any) -> Tensor:
         output = input
@@ -141,14 +144,13 @@ class Block(nn.Module):
 
     @property
     def lr_equalization(self) -> bool:
-        return self.__lr_equalization
-
-    @lr_equalization.setter
-    def lr_equalization(self, value: bool) -> None:
-        if self.__lr_equalization == value:
-            return
-        self.__lr_equalization = value
-        self._check_layers()
+        if "weighting" not in self.layers:
+            return False
+        weight_layer = self.layers.get_submodule("weighting")
+        for hook in weight_layer._forward_pre_hooks.values():
+            if isinstance(hook, lr_equalizers.WeightLREqualizer):
+                return True
+        return False
 
     @property
     def op_order(self) -> str:
@@ -187,7 +189,7 @@ class Block(nn.Module):
     def _update_layer_in_order(
         self, name: str, module: Optional[nn.Module] = None
     ) -> None:
-        if name not in sum(SUPPORT_LAYER_NAMES.values(), []):
+        if name not in sum(self.SUPPORT_LAYER_NAMES.values(), []):
             raise ValueError(
                 f"Not support: {name}. If want to use this layer, add it to "
                 "`firewood.layers.block.SUPPORT_LAYER_NAMES` in correct order."
@@ -200,7 +202,7 @@ class Block(nn.Module):
 
         updated_layers = nn.ModuleDict()
         for op in self.__op_order:
-            for _name in SUPPORT_LAYER_NAMES[op]:
+            for _name in self.SUPPORT_LAYER_NAMES[op]:
                 if _name == name:
                     updated_layers.add_module(_name, module)
                 elif _name in self.layers:
@@ -269,17 +271,102 @@ class Block(nn.Module):
         Use only trainable fused layers.
         """
 
+        def __fuse_upsample_1x1_convolution() -> None:
+            """
+            Weighting first to not use upsampled spatial size.
+            weighting -> up_fir
+            """
+            w_index = self.SUPPORT_LAYER_NAMES["W"].index("weighting")
+            if self.SUPPORT_LAYER_NAMES["W"][w_index - 1] != "up_fir":
+                return
+            self.SUPPORT_LAYER_NAMES["W"][w_index - 1] = "weighting"
+            self.SUPPORT_LAYER_NAMES["W"][w_index] = "up_fir"
+
+        def __fuse_downsample_1x1_convolution() -> None:
+            """
+            Downsampling first to reduce the spatial size to compute.
+            fir_down -> weighting
+            """
+            w_index = self.SUPPORT_LAYER_NAMES["W"].index("weighting")
+            if self.SUPPORT_LAYER_NAMES["W"][w_index + 1] != "fir_down":
+                return
+            self.SUPPORT_LAYER_NAMES["W"][w_index + 1] = "weighting"
+            self.SUPPORT_LAYER_NAMES["W"][w_index] = "fir_down"
+
+        def __unravel_resample_1x1_convolution() -> None:
+            """
+            Unravel resample 1x1 convolution if use both upsample and downsample.
+            Because it is not possible to fuse upsample and downsample.
+            up_fir -> weighting -> fir_down
+            """
+            w_index = self.SUPPORT_LAYER_NAMES["W"].index("weighting")
+            if self.SUPPORT_LAYER_NAMES["W"][w_index - 1] == "fir_down":
+                self.SUPPORT_LAYER_NAMES["W"][w_index - 1] = "weighting"
+                self.SUPPORT_LAYER_NAMES["W"][w_index] = "fir_down"
+            if self.SUPPORT_LAYER_NAMES["W"][w_index + 1] == "up_fir":
+                self.SUPPORT_LAYER_NAMES["W"][w_index + 1] = "weighting"
+                self.SUPPORT_LAYER_NAMES["W"][w_index] = "up_fir"
+
+        # TODO: Need to implement follows.
+        # conv -> transposed_conv, transposed_conv -> conv
         def __fuse_upsample_convolution() -> None:
-            if "weighting" not in self.layers:
-                return
-            if "up_fir" not in self.layers:
-                return
+            weight_layer = self.layers.get_submodule("weighting")
+            up_layer = cast(_UpFirDnNd, self.layers.get_submodule("up_fir"))
+            stride = up_layer.up
 
         def __fuse_downsample_convolution() -> None:
+            weight_layer = self.layers.get_submodule("weighting")
+            down_layer = cast(_UpFirDnNd, self.layers.get_submodule("fir_down"))
+
+        def __fuse_resample_convolution() -> None:
             if "weighting" not in self.layers:
                 return
-            if "fir_down" not in self.layers:
+            weight_layer = self.layers.get_submodule("weighting")
+            name = utils.get_name(weight_layer).lower()
+            if "conv" not in name or "sep" in name:
                 return
+            if "up_fir" in self.layers:
+                up_layer = cast(_UpFirDnNd, self.layers.get_submodule("up_fir"))
+                up_use_resample = up_layer.use_resample
+                up_use_fir = up_layer.use_fir
+            else:
+                up_layer = None
+                up_use_resample = False
+                up_use_fir = False
+            if "fir_down" in self.layers:
+                down_layer = cast(
+                    _UpFirDnNd, self.layers.get_submodule("fir_down")
+                )
+                down_use_resample = down_layer.use_resample
+                down_use_fir = down_layer.use_fir
+            else:
+                down_layer = None
+                down_use_resample = False
+                down_use_fir = False
+            # If fir only, do not fuse.
+            if not up_use_resample and not down_use_resample:
+                return
+
+            is_1x1_convolution = all(
+                s == 1
+                for s in cast(Tensor, getattr(weight_layer, "weight")).shape[2:]
+            )
+            if is_1x1_convolution:
+                if up_use_resample and down_layer is None:
+                    __fuse_upsample_1x1_convolution()
+                elif up_layer is None and down_use_resample:
+                    __fuse_downsample_1x1_convolution()
+                else:
+                    __unravel_resample_1x1_convolution()
+                return
+
+            if set(getattr(weight_layer, "stride")) != {1}:
+                return
+
+            if up_layer is None and down_use_resample:
+                __fuse_downsample_convolution()
+            elif up_use_resample:
+                __fuse_upsample_convolution()
 
         def __fuse_biased_activation() -> None:
             if "activation" not in self.layers:
@@ -295,8 +382,7 @@ class Block(nn.Module):
                 lr_equalizers.transfer_bias_attrs(bias_layer, activation_layer)
                 self._update_layer_in_order("add_bias", None)
 
-        __fuse_upsample_convolution()
-        __fuse_downsample_convolution()
+        __fuse_resample_convolution()
         __fuse_biased_activation()
 
     def __unravel_fused_layers_if_faster(self) -> None:
@@ -330,7 +416,7 @@ class Block(nn.Module):
             self.__op_order.index("W") : self.__op_order.index("B")
         ]
         layers: List[str] = sum(
-            (SUPPORT_LAYER_NAMES[op] for op in op_before_bias), []
+            (self.SUPPORT_LAYER_NAMES[op] for op in op_before_bias), []
         )
         index = layers.index("weighting")
         for layer in layers[index + 1 :]:
@@ -376,3 +462,41 @@ def normalize_op_order(op_order: str) -> str:
                 f"Op order must contain exactly one {char} character."
             )
     return re.sub("(WN?)", r"\1B", op_order)
+
+
+def conv_to_trans_conv(module: nn.Module) -> nn.Module:
+    """
+    Convert a convolutional layer to a transposed convolutional layer.
+    If the input is already transposed convolutional layer, return input itself.
+    The converted module's output will be the same as the original module's if
+    stride is 1 and padding is 0.
+
+    Args:
+        module: A convolutional layer.
+            nn.ConvNd -> nn.ConvTransposeNd
+            firewood.layers.GFixConvNd -> firewood.layers.GFixConvTransposeNd
+    Returns:
+        A transposed convolutional layer.
+    """
+    for submodule in module.modules():
+        name = utils.get_name(submodule).lower()
+        if "conv" not in name or "sep" in name:
+            continue
+    params = dict(inspect.signature(module.__init__).parameters)
+
+
+def trans_conv_to_conv(module: nn.Module) -> nn.Module:
+    """
+    Convert a transposed convolutional layer to a convolutional layer.
+    If the input is already convolutional layer, return input itself.
+    The converted module's output will be the same as the original module's if
+    stride is 1 and padding is 0 and output_padding is 0.
+
+    Args:
+        module: A transposed convolutional layer.
+            nn.ConvTransposeNd -> nn.ConvNd
+            firewood.layers.GFixConvTransposeNd -> firewood.layers.GFixConvNd
+    Returns:
+        A convolutional layer.
+    """
+    params = dict(inspect.signature(module.__init__).parameters)
