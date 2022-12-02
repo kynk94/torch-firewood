@@ -14,6 +14,9 @@ from firewood.utils.common import normalize_int_tuple
 def firNd(
     input: Tensor, kernel: Tensor, gain: float = 1.0, flip_kernel: bool = False
 ) -> Tensor:
+    if kernel.numel() == 1 and kernel.item() == 1.0 and gain == 1.0:
+        return input
+
     rank = input.ndim - 2
     if rank == 1:
         conv = F.conv1d
