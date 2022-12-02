@@ -47,7 +47,9 @@ def get_upfir_firdn_layers(
     up = utils.normalize_int_tuple(up or 1, rank)
     down = utils.normalize_int_tuple(down or 1, rank)
     module: _UpFirDnNd = getattr(sys.modules[__name__], f"UpFirDn{rank}d")
-    if any(u > 1 for u in up):
+    use_upsample = any(u > 1 for u in up)
+    use_downsample = any(d > 1 for d in down)
+    if use_upsample:
         if upsample_mode.startswith("zero"):
             up_gain = gain * cast(float, np.prod(up))
         else:
@@ -62,7 +64,7 @@ def get_upfir_firdn_layers(
             flip_kernel=flip_kernel,
             ignore_same_padding=False,
         )
-    if any(d > 1 for d in down):
+    if use_downsample or (not use_upsample and kernel is not None):
         fir_downsample_layer = module(
             kernel=kernel,
             up=1,
