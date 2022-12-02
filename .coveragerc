@@ -1,12 +1,13 @@
 [run]
 source =
     firewood/common
+    firewood/functional
     firewood/hooks
     firewood/layers
     firewood/models
     firewood/trainer/callbacks
-    firewood/trainer/losses
     firewood/trainer/metrics
+    firewood/trainer/schedulers
     firewood/trainer/utils
     firewood/utils
 
