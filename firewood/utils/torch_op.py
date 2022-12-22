@@ -91,10 +91,10 @@ def get_rank(module: nn.Module) -> int:
 
 def get_in_out_features(module: nn.Module) -> Tuple[int, int]:
     in_features: Optional[int] = search_attr(
-        module, ["in_features", "in_channels"]
+        module, ("in_features", "in_channels"), None
     )
     out_features: Optional[int] = search_attr(
-        module, ["out_features", "out_channels"]
+        module, ("out_features", "out_channels"), None
     )
     if in_features is None or out_features is None:
         weight: Optional[Tensor] = getattr(module, "weight", None)
@@ -130,21 +130,60 @@ def clone_to_cpu_tensor(tensor: Tensor) -> Tensor:
     return tensor.detach().cpu()
 
 
-def same_padding_for_functional_pad(
-    transposed: bool,
+def conv_same_padding_for_functional_pad(
+    kernel_size: Tuple[int, ...],
+    stride: Tuple[int, ...],
+    dilation: Tuple[int, ...],
+    spatial_size: Optional[Tuple[int, ...]] = None,
+) -> Tuple[int, ...]:
+    """
+    Calculate padding size for same padding in functional.pad.
+
+    The padding size is dependent on the input `spatial_size`, so it is not
+    possible to calculate the padding size in module's init method.
+    """
+    if spatial_size is None:
+        if set(stride) != {1}:
+            raise ValueError(
+                "Cannot calculate padding size for stride != 1 "
+                f"without `spatial_size`. Got {stride}."
+            )
+        spatial_size = (1,) * len(kernel_size)
+    pad = []
+    for k, d, s, i in zip(kernel_size, dilation, stride, spatial_size):
+        div, mod = divmod((k - 1) * d + 1 - s + i % s, 2)
+        pad.extend([div + mod, div])
+    return tuple(reversed(pad))
+
+
+def conv_transpose_same_padding_for_functional_pad(
     kernel_size: Tuple[int, ...],
     stride: Tuple[int, ...],
     dilation: Tuple[int, ...],
 ) -> Tuple[int, ...]:
-    pad = []
-    if transposed:
-        for k, d, s in zip(kernel_size, dilation, stride):
-            div, mod = divmod((k - 1) * d + 1 - s, 2)
-            pad.extend([div + mod, div])
-    else:
+    """
+    PyTorch's output_padding cannot be None, so ignore it for same padding.
+    Output size with same padding:
+    >>> O = stride * input_size + output_padding
+
+    In Tensorflow, output size with same padding is following
+    >>> if output_padding is None:
+            O = stride * input_size
+        else:
+            F = (kernel_size - 1) * dilation + 1
+            O = stride * (input_size - 1) + F % 2 + output_padding
+
+    If Tensorflow's output_padding is not None, the padding is following
+    >>> pad = []
         for k, d in zip(kernel_size, dilation):
             div, mod = divmod((k - 1) * d, 2)
             pad.extend([div + mod, div])
+        pad = tuple(reversed(pad))
+    """
+    pad = []
+    for k, d, s in zip(kernel_size, dilation, stride):
+        div, mod = divmod((k - 1) * d + 1 - s, 2)
+        pad.extend([div + mod, div])
     return tuple(reversed(pad))
 
 

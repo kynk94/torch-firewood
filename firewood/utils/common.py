@@ -23,6 +23,8 @@ from torch import Tensor
 
 from firewood.common.types import FLOAT, INT, NUMBER, STR
 
+DEFAULT = "__default"
+
 
 def is_newer_torch(version: Union[str, int, float]) -> bool:
     if isinstance(version, (int, float)):
@@ -83,7 +85,7 @@ def updated_dict(
 def search_kwargs(
     kwargs: Dict[str, Any],
     keys: Union[str, Iterable[str]],
-    default: Any = "__default",
+    default: Any = DEFAULT,
     pop: bool = False,
 ) -> Any:
     if isinstance(keys, str):
@@ -93,7 +95,7 @@ def search_kwargs(
             if pop:
                 return kwargs.pop(key)
             return kwargs.get(key)
-    if default != "__default":
+    if default != DEFAULT:
         return default
     raise KeyError(f"None of {keys} is found in {kwargs}.")
 
@@ -104,9 +106,9 @@ def attr_is_value(obj: Any, attr: str, value: Any) -> bool:
     return getattr(obj, attr) == value
 
 
-def popattr(obj: Any, attr: str, default: Any = "__default") -> Any:
+def popattr(obj: Any, attr: str, default: Any = DEFAULT) -> Any:
     if not hasattr(obj, attr):
-        if default == "__default":
+        if default == DEFAULT:
             raise AttributeError(f"'{obj}' object has no attribute '{attr}'")
         return default
     value = getattr(obj, attr)
@@ -114,15 +116,19 @@ def popattr(obj: Any, attr: str, default: Any = "__default") -> Any:
     return value
 
 
-def search_attr(obj: Any, keys: Union[str, Iterable[str]]) -> Any:
-    attr = None
+def search_attr(
+    obj: Any, keys: Union[str, Iterable[str]], default: Any = DEFAULT
+) -> Any:
     if isinstance(keys, str):
-        return getattr(obj, keys, None)
+        attr = getattr(obj, keys, default)
+        if attr == DEFAULT:
+            raise AttributeError(f"'{obj}' object has no attribute '{keys}'")
+        return attr
     for key in keys:
-        attr = getattr(obj, key, None)
-        if attr is not None:
-            break
-    return attr
+        attr = getattr(obj, key, default)
+        if attr != DEFAULT:
+            return attr
+    raise AttributeError(f"'{obj}' object has no attribute {tuple(keys)}")
 
 
 def keep_setattr(

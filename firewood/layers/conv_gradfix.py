@@ -27,8 +27,9 @@ from firewood.utils import (
     _pair_padding,
     _single_padding,
     _triple_padding,
+    conv_same_padding_for_functional_pad,
+    conv_transpose_same_padding_for_functional_pad,
     padding_for_functional_pad,
-    same_padding_for_functional_pad,
 )
 
 FORCE_DEFAULT = False
@@ -128,7 +129,7 @@ class _GFixConvNd(nn.Module):
         if isinstance(padding_mode, (int, float)):
             self.conv_pad = padding_mode != 0
             self.padding_value, self.padding_mode = padding_mode, "constant"
-        elif padding_mode == "zeros":
+        elif padding_mode in {"zeros", "constant"}:
             self.padding_mode = "constant"
         else:
             self.conv_pad = not self.transposed
@@ -137,15 +138,23 @@ class _GFixConvNd(nn.Module):
         if isinstance(padding, str):
             if padding.lower() != "same":
                 raise ValueError("Only 'same' padding is supported")
-            padding = same_padding_for_functional_pad(
-                transposed=self.transposed,
-                kernel_size=self.kernel_size,
-                stride=self.stride,
-                dilation=self.dilation,
-            )
+            if self.transposed:
+                padding = conv_transpose_same_padding_for_functional_pad(
+                    kernel_size=self.kernel_size,
+                    stride=self.stride,
+                    dilation=self.dilation,
+                )
+            elif set(self.stride) == {1}:
+                padding = conv_same_padding_for_functional_pad(
+                    kernel_size=self.kernel_size,
+                    stride=self.stride,
+                    dilation=self.dilation,
+                )
+            else:
+                padding = "same"
         else:
             padding = padding_for_functional_pad(self.rank, padding)
-        if len(set(padding)) == 1:
+        if not isinstance(padding, str) and len(set(padding)) == 1:
             padding = (padding[0],) * self.rank
         self.padding = padding
 
@@ -198,7 +207,7 @@ class _GFixConvNd(nn.Module):
         if self.conv_pad or self.conv_transpose_pad:
             padding = (0,) * self.rank
         else:
-            padding = self.padding
+            padding = cast(Tuple[int, ...], self.padding)
         if self.force_default:
             operation_name = f"conv{self.rank}d"
             kwargs = dict(
@@ -223,6 +232,18 @@ class _GFixConvNd(nn.Module):
         )
 
     def forward(self, input: Tensor) -> Tensor:
+        if self.padding == "same":
+            self.padding = conv_same_padding_for_functional_pad(
+                kernel_size=self.kernel_size,
+                stride=self.stride,
+                dilation=self.dilation,
+                spatial_size=input.shape[-self.rank :],
+            )
+            if len(set(self.padding)) == 1:
+                self.padding = (self.padding[0],) * self.rank
+                self.conv_pad = False
+            else:
+                self.conv_pad = True
         if self.conv_pad:
             # padding
             input = F.pad(
