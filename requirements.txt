@@ -1,5 +1,6 @@
 imageio
 imageio-ffmpeg
+kornia
 natsort
 ninja
 sympy

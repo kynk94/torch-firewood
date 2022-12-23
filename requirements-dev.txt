@@ -3,6 +3,7 @@ black
 imageio
 imageio-ffmpeg
 isort
+kornia
 mypy
 natsort
 ninja

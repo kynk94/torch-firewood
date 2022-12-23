@@ -7,6 +7,10 @@ import torch
 import torch.nn.functional as F
 import torchvision.transforms.functional_tensor as TFT
 import torchvision.utils as TU
+from kornia.geometry.transform import (
+    get_perspective_transform,
+    warp_perspective,
+)
 from numpy import ndarray
 from PIL import Image
 from torch import Tensor
@@ -489,6 +493,71 @@ def blur_pad(
         padded_image - padded_image.mean(dim=(2, 3), keepdim=True)
     )
     return padded_image
+
+
+def quad_transform(
+    image: Tensor,
+    quad: Tensor,
+    resolution: INT,
+    mode: str = "bilinear",
+    padding_mode: str = "reflection",
+    align_corners: bool = False,
+) -> Tensor:
+    """
+    Transform image to a quad.
+
+    Args:
+        image: (N, C, H, W) image tensor
+        quad: (N, 4, 2) quad tensor
+            1-dim order: (left-top, left-bottom, right-bottom, right-top)
+        resolution: Resolution of output image. (height, width) or int
+        mode: Interpolation mode. One of {"nearest", "bilinear"}.
+            Default: "bilinear"
+        padding_mode: One of {"zeros", "border", "reflection", "blur"}.
+            Default: "reflection"
+        align_corners: If True, the corner pixels of the input and output
+            tensors are aligned, and thus preserving the values at the corner
+            pixels. Default: False
+
+    Returns:
+        A tensor of transformed image. (N, C, resolution, resolution)
+    """
+    is_batch = image.ndim == 4
+    if not is_batch:
+        image = image.unsqueeze(0)
+    if quad.ndim == 2:
+        quad = quad.unsqueeze(0)
+    NI, NQ = image.size(0), quad.size(0)
+    if NI != NQ:
+        if NQ == 1:
+            quad = quad.expand(NI, -1, -1)
+        else:
+            raise ValueError(
+                "The batch size of image and quad must be same. "
+                f"image: {NI}, quad: {NQ}."
+            )
+    if padding_mode == "blur":
+        # TODO: implement blur padding
+        padding_mode = "zeros"
+        raise NotImplementedError("Blur padding is not implemented yet.")
+    res_H, res_W = normalize_int_tuple(resolution, 2)
+    destination = torch.tensor(
+        [[0, 0], [0, res_H - 1], [res_W - 1, res_H - 1], [res_W - 1, 0]],
+        dtype=torch.float32,
+        device=image.device,
+    ).expand(NI, -1, -1)
+    transform_matrix = get_perspective_transform(quad, destination)
+    output = warp_perspective(
+        src=image,
+        M=transform_matrix,
+        dsize=(res_H, res_W),
+        mode=mode,
+        padding_mode=padding_mode,
+        align_corners=align_corners,
+    )
+    if is_batch:
+        return output
+    return output.squeeze(0)
 
 
 def resize(
