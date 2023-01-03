@@ -125,9 +125,10 @@ def search_attr(
             raise AttributeError(f"'{obj}' object has no attribute '{keys}'")
         return attr
     for key in keys:
-        attr = getattr(obj, key, default)
-        if attr != DEFAULT:
-            return attr
+        if hasattr(obj, key):
+            return getattr(obj, key)
+    if default != DEFAULT:
+        return default
     raise AttributeError(f"'{obj}' object has no attribute {tuple(keys)}")
 
 
