@@ -15,14 +15,17 @@ from numpy import ndarray
 from PIL import Image
 from torch import Tensor
 
-from firewood.common.types import INT
+from firewood.common.types import FLOAT, INT
 from firewood.utils.common import (
     median_two_divisors,
     normalize_float_tuple,
     normalize_int_tuple,
     squared_number,
 )
-from firewood.utils.torch_op import padding_for_functional_pad
+from firewood.utils.torch_op import (
+    conv_same_padding_for_functional_pad,
+    padding_for_functional_pad,
+)
 
 
 def alpha_smoothing(
@@ -444,11 +447,38 @@ def get_semantic_edge(input: Tensor) -> Tensor:
     return edge.to(dtype=input.dtype)
 
 
+def gaussian_blur(
+    image: Tensor, kernel_size: INT, sigma: FLOAT, use_separable: bool = True
+) -> Tensor:
+    kernel_size = normalize_int_tuple(kernel_size, 2)
+    sigma = normalize_float_tuple(sigma, 2)
+    padding = conv_same_padding_for_functional_pad(
+        kernel_size, (1, 1), (1, 1), tuple(image.shape[-2:])
+    )
+    image = F.pad(image, padding, mode="reflect")
+
+    if use_separable:
+        for k in ((kernel_size[0], 1), (1, kernel_size[1])):
+            kernel = TFT._get_gaussian_kernel2d(
+                k, sigma, dtype=torch.float32, device=image.device
+            )
+            kernel = kernel.expand(image.shape[-3], 1, -1, -1)
+            image = F.conv2d(image, kernel, groups=image.shape[-3])
+    else:
+        kernel = TFT._get_gaussian_kernel2d(
+            kernel_size, sigma, dtype=torch.float32, device=image.device
+        )
+        kernel = kernel.expand(image.shape[-3], 1, -1, -1)
+        image = F.conv2d(image, kernel, groups=image.shape[-3])
+    return image
+
+
 def blur_pad(
     image: Tensor,
     padding: INT,
     sigma: Optional[float] = None,
     truncate: float = 4.0,
+    quad_size: Optional[float] = None,
 ) -> Tensor:
     """
     Reflect padding and add Gaussian blur to padded area.
@@ -464,35 +494,47 @@ def blur_pad(
         sigma: Sigma of Gaussian kernel.
         truncate: Truncate the Gaussian kernel at this many standard deviations.
             kernel_size = 2 * ceil(sigma * truncate) + 1
+        quad_size: length of quadratic points of transform.
+            max(diagonal length of quadrilateral) / sqrt(2)
 
     Returns:
         A tensor of blurred image. (N, C, H + 2 * padding, W + 2 * padding)
     """
     padding = padding_for_functional_pad(2, padding)
-    padded_image = F.pad(image, padding, mode="reflect")
-    H, W = padded_image.shape[-2:]
-    L, R, T, B = padding
+    padded_image = F.pad(image.float(), padding, mode="reflect")
+    if quad_size is None:
+        quad_size = cast(float, np.hypot(*padded_image.shape[-2:]) / np.sqrt(2))
     if sigma is None:
-        sigma = np.hypot(H, W) * 0.02
+        sigma = quad_size * 0.02
     kernel_size = 2 * int(np.ceil(sigma * truncate)) + 1
-    blurred_image = TFT.gaussian_blur(
-        img=padded_image, kernel_size=(kernel_size,) * 2, sigma=(sigma,) * 2
+    blurred_image = gaussian_blur(
+        padded_image, kernel_size=(kernel_size,) * 2, sigma=(sigma,) * 2
     )
 
-    height_mask = torch.arange(H, dtype=torch.float32, device=image.device)
-    width_mask = torch.arange(W, dtype=torch.float32, device=image.device)
-    height_mask = torch.minimum(height_mask / T, height_mask.flip(0) / B)
-    width_mask = torch.minimum(width_mask / L, width_mask.flip(0) / R)
-    mask = 1 - torch.minimum(height_mask.unsqueeze(-1), width_mask.unsqueeze(0))
+    l, r, t, b = padding
+    L, R, T, B = np.maximum(padding, max(quad_size * 0.3, 1)).astype(int)
+    H = image.size(-2) + T + B
+    W = image.size(-1) + L + R
+    h_mask = torch.arange(H, dtype=torch.float32, device=image.device)
+    w_mask = torch.arange(W, dtype=torch.float32, device=image.device)
+    h_mask = torch.minimum(h_mask / T, h_mask.flip(0) / B)
+    w_mask = torch.minimum(w_mask / L, w_mask.flip(0) / R)
+    mask = 1 - torch.minimum(h_mask.unsqueeze(-1), w_mask.unsqueeze(0))
+    # crop
+    mask = F.pad(mask, (-L + l, -R + r, -T + t, -B + b))
 
-    padded_image = padded_image - (mask * 3.0 + 1.0).clip(0.0, 1.0) * (
-        padded_image - blurred_image
+    padded_image = torch.lerp(
+        input=padded_image,
+        end=blurred_image,
+        weight=(mask * 3.0 + 1.0).clip(0.0, 1.0),
     )
     # ffhq-dataset uses median. But torch.median not operate along axis.
-    padded_image = padded_image - mask.clip(0.0, 1.0) * (
-        padded_image - padded_image.mean(dim=(2, 3), keepdim=True)
+    padded_image = torch.lerp(
+        input=padded_image,
+        end=padded_image.mean(dim=(-2, -1), keepdim=True),
+        weight=mask.clip(0.0, 1.0),
     )
-    return padded_image
+    return padded_image.to(dtype=image.dtype)
 
 
 def quad_transform(
@@ -537,9 +579,32 @@ def quad_transform(
                 f"image: {NI}, quad: {NQ}."
             )
     if padding_mode == "blur":
-        # TODO: implement blur padding
         padding_mode = "zeros"
-        raise NotImplementedError("Blur padding is not implemented yet.")
+        with torch.no_grad():
+            LT_RB = torch.norm(quad[:, 0] - quad[:, 2], dim=-1)
+            LB_RT = torch.norm(quad[:, 1] - quad[:, 3], dim=-1)
+            quad_sizes = torch.max(LT_RB, LB_RT).mul(1 / np.sqrt(2)).tolist()
+            points = quad.flatten(0, 1).sort(0)[0]
+            L = max(0, int(torch.ceil(-points[0][0]).item()))
+            T = max(0, int(torch.ceil(-points[0][1]).item()))
+            R = max(0, torch.ceil(points[-1][0] - image.size(-1)).int().item())
+            B = max(0, torch.ceil(points[-1][1] - image.size(-2)).int().item())
+        padding = cast(Tuple[int, ...], (T, B, L, R))
+        image = torch.stack(
+            tuple(
+                blur_pad(
+                    image[i],
+                    padding=padding,
+                    sigma=None,
+                    quad_size=quad_sizes[i],
+                )
+                for i in range(NI)
+            ),
+            dim=0,
+        )
+        quad = quad + torch.tensor(
+            [[[L, T]]], dtype=quad.dtype, device=quad.device
+        )
     res_H, res_W = normalize_int_tuple(resolution, 2)
     destination = torch.tensor(
         [[0, 0], [0, res_H - 1], [res_W - 1, res_H - 1], [res_W - 1, 0]],
