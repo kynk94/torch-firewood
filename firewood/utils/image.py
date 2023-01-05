@@ -22,10 +22,7 @@ from firewood.utils.common import (
     normalize_int_tuple,
     squared_number,
 )
-from firewood.utils.torch_op import (
-    conv_same_padding_for_functional_pad,
-    padding_for_functional_pad,
-)
+from firewood.utils.torch_op import padding_for_functional_pad
 
 
 def alpha_smoothing(
@@ -452,15 +449,16 @@ def gaussian_blur(
 ) -> Tensor:
     kernel_size = normalize_int_tuple(kernel_size, 2)
     sigma = normalize_float_tuple(sigma, 2)
-    padding = conv_same_padding_for_functional_pad(
-        kernel_size, (1, 1), (1, 1), tuple(image.shape[-2:])
-    )
-    image = F.pad(image, padding, mode="reflect")
+    pad = []
+    for k in kernel_size:
+        div, mod = divmod(k - 1, 2)
+        pad.extend([div + mod, div])
+    image = F.pad(image, tuple(reversed(pad)), mode="reflect")
 
     if use_separable:
-        for k in ((kernel_size[0], 1), (1, kernel_size[1])):
+        for separated_k in ((kernel_size[0], 1), (1, kernel_size[1])):
             kernel = TFT._get_gaussian_kernel2d(
-                k, sigma, dtype=torch.float32, device=image.device
+                separated_k, sigma, dtype=torch.float32, device=image.device
             )
             kernel = kernel.expand(image.shape[-3], 1, -1, -1)
             image = F.conv2d(image, kernel, groups=image.shape[-3])
