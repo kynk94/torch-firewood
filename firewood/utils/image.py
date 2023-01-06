@@ -496,7 +496,7 @@ def blur_pad(
             max(diagonal length of quadrilateral) / sqrt(2)
 
     Returns:
-        A tensor of blurred image. (N, C, H + 2 * padding, W + 2 * padding)
+        A tensor of blurred image. (N, C, H + top + bottom, W + left + right)
     """
     padding = padding_for_functional_pad(2, padding)
     padded_image = F.pad(image.float(), padding, mode="reflect")
